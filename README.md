@@ -82,7 +82,7 @@ pnpm dev          # server on :8080 (data in apps/server/.data) + Vite on :5173
 | Browser e2e: create/join/start/ask/answer/rejoin/end, secrecy, no third-party CDNs, bundle budget                                           | `e2e/`                                                             |
 | Lighthouse budgets (mobile, simulated 4G)                                                                                                   | `lighthouserc.json` (CI)                                           |
 | Backup helper vs. sqlite3 3.22 in `ubuntu:18.04` (plain + `age`, NAS names, restore, corrupt file)                                          | `deploy/homeserver/test` (CI)                                      |
-| Container amd64 + arm64 (QEMU): start guard, health, uid 1000, graceful stop, size budget (~72 MB compressed) | CI `container` job |
+| Container amd64 + arm64 (QEMU): start guard, health, uid 1000, graceful stop, size budget (~72 MB compressed)                               | CI `container` job                                                 |
 | On-device checks on the Jetson                                                                                                              | [deploy/homeserver/ACCEPTANCE.md](deploy/homeserver/ACCEPTANCE.md) |
 
 ## Releasing
