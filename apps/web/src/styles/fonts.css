@@ -1,0 +1,16 @@
+/*
+ * Poppins Bold is the landing-page heading (the LCP element). `optional`
+ * avoids a late re-paint when the font arrives after first render on slow
+ * connections; it is preloaded from index.html so it is normally in time.
+ */
+@font-face {
+    font-family: "Poppins";
+    font-style: normal;
+    font-display: optional;
+    font-weight: 700;
+    src:
+        url(../../node_modules/@fontsource/poppins/files/poppins-latin-700-normal.woff2)
+            format("woff2"),
+        url(../../node_modules/@fontsource/poppins/files/poppins-latin-700-normal.woff)
+            format("woff");
+}

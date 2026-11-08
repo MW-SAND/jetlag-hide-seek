@@ -1,0 +1,17 @@
+# Local run of the production image (http://localhost:8080).
+# The homeserver uses its own compose file — see deploy/homeserver/.
+services:
+    jetlag:
+        build: .
+        image: jetlag-hide-seek:local
+        ports:
+            - "8080:8080"
+        environment:
+            COOKIE_SECURE: "false"
+            REQUIRE_DATA_MARKER: "false"
+        volumes:
+            - jetlag-data:/data
+        restart: unless-stopped
+
+volumes:
+    jetlag-data:

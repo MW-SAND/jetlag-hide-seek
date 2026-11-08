@@ -1,0 +1,19 @@
+{
+    "compilerOptions": {
+        "target": "ES2022",
+        "lib": ["ES2023", "DOM", "DOM.Iterable", "WebWorker.ImportScripts"],
+        "module": "ESNext",
+        "moduleResolution": "Bundler",
+        "resolveJsonModule": true,
+        "allowImportingTsExtensions": true,
+        "isolatedModules": true,
+        "verbatimModuleSyntax": false,
+        "strict": true,
+        "noEmit": true,
+        "skipLibCheck": true,
+        "esModuleInterop": true,
+        "allowSyntheticDefaultImports": true,
+        "forceConsistentCasingInFileNames": true,
+        "jsx": "react-jsx"
+    }
+}

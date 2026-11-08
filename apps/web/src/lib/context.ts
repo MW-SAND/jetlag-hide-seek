@@ -1,0 +1,391 @@
+import type {
+    AdditionalMapGeoLocations,
+    CustomStation,
+    OpenStreetMap,
+} from "@jetlag/geo/api";
+import * as geoEnv from "@jetlag/geo/env";
+import { extractStationLabel } from "@jetlag/geo/geo-utils/special";
+import {
+    type DeepPartial,
+    type Question,
+    type Questions,
+    questionSchema,
+    questionsSchema,
+    type Units,
+} from "@jetlag/geo/schema";
+import { persistentAtom } from "@nanostores/persistent";
+import type { FeatureCollection, MultiPolygon, Polygon } from "geojson";
+import type { Map } from "leaflet";
+import { atom, computed, onSet, type ReadableAtom } from "nanostores";
+
+/** Keep the geo engine's environment in sync with a persistent app store. */
+const mirror = <T>(
+    source: ReadableAtom<T>,
+    target: { set(value: T): void },
+) => {
+    source.subscribe((value) => target.set(value));
+};
+
+export const mapGeoLocation = persistentAtom<OpenStreetMap>(
+    "mapGeoLocation",
+    geoEnv.DEFAULT_MAP_GEO_LOCATION,
+    {
+        encode: JSON.stringify,
+        decode: JSON.parse,
+    },
+);
+mirror(mapGeoLocation, geoEnv.mapGeoLocation);
+
+export const additionalMapGeoLocations = persistentAtom<
+    AdditionalMapGeoLocations[]
+>("additionalMapGeoLocations", [], {
+    encode: JSON.stringify,
+    decode: JSON.parse,
+});
+mirror(additionalMapGeoLocations, geoEnv.additionalMapGeoLocations);
+
+export const permanentOverlay = persistentAtom<FeatureCollection | null>(
+    "permanentOverlay",
+    null,
+    {
+        encode: JSON.stringify,
+        decode: JSON.parse,
+    },
+);
+
+/** Base playable area (shared with the geo engine). */
+export const mapGeoJSON = geoEnv.mapGeoJSON;
+export const polyGeoJSON = persistentAtom<FeatureCollection<
+    Polygon | MultiPolygon
+> | null>("polyGeoJSON", null, {
+    encode: JSON.stringify,
+    decode: JSON.parse,
+});
+mirror(polyGeoJSON, geoEnv.polyGeoJSON);
+
+export const questions = persistentAtom<Questions>("questions", [], {
+    encode: JSON.stringify,
+    decode: (x) => questionsSchema.parse(JSON.parse(x)),
+});
+export const addQuestion = (question: DeepPartial<Question>) =>
+    questionModified(questions.get().push(questionSchema.parse(question)));
+
+export const questionModified = (..._: any[]) => {
+    if (autoSave.get()) {
+        questions.set([...questions.get()]);
+    } else {
+        triggerLocalRefresh.set(Math.random());
+    }
+};
+
+export const leafletMapContext = atom<Map | null>(null);
+
+export const defaultUnit = persistentAtom<Units>("defaultUnit", "miles");
+mirror(defaultUnit, geoEnv.defaultUnit);
+export const hiderMode = persistentAtom<
+    | false
+    | {
+          latitude: number;
+          longitude: number;
+      }
+>("isHiderMode", false, {
+    encode: JSON.stringify,
+    decode: JSON.parse,
+});
+mirror(hiderMode, geoEnv.hiderMode);
+export const triggerLocalRefresh = atom<number>(0);
+export const displayHidingZones = persistentAtom<boolean>(
+    "displayHidingZones",
+    false,
+    {
+        encode: JSON.stringify,
+        decode: JSON.parse,
+    },
+);
+export const displayHidingZonesOptions = persistentAtom<string[]>(
+    "displayHidingZonesOptions",
+    ["[railway=station]"],
+    {
+        encode: JSON.stringify,
+        decode: JSON.parse,
+    },
+);
+export const displayHidingZonesStyle = persistentAtom<
+    "zones" | "stations" | "no-overlap" | "no-display"
+>("displayHidingZonesStyle", "zones");
+export const questionFinishedMapData = atom<any>(null);
+
+export const trainStations = geoEnv.trainStations;
+onSet(trainStations, ({ newValue }) => {
+    newValue.sort((a, b) => {
+        const aName = (extractStationLabel(a.properties) || "") as string;
+        const bName = (extractStationLabel(b.properties) || "") as string;
+        return aName.localeCompare(bName);
+    });
+});
+
+export const useCustomStations = persistentAtom<boolean>(
+    "useCustomStations",
+    false,
+    {
+        encode: JSON.stringify,
+        decode: JSON.parse,
+    },
+);
+export const customStations = persistentAtom<CustomStation[]>(
+    "customStations",
+    [],
+    {
+        encode: JSON.stringify,
+        decode: JSON.parse,
+    },
+);
+export const mergeDuplicates = persistentAtom<boolean>(
+    "removeDuplicates",
+    false,
+    {
+        encode: JSON.stringify,
+        decode: JSON.parse,
+    },
+);
+export const includeDefaultStations = persistentAtom<boolean>(
+    "includeDefaultStations",
+    false,
+    {
+        encode: JSON.stringify,
+        decode: JSON.parse,
+    },
+);
+export const animateMapMovements = persistentAtom<boolean>(
+    "animateMapMovements",
+    false,
+    {
+        encode: JSON.stringify,
+        decode: JSON.parse,
+    },
+);
+export const hidingRadius = persistentAtom<number>("hidingRadius", 0.5, {
+    encode: JSON.stringify,
+    decode: JSON.parse,
+});
+export const hidingRadiusUnits = persistentAtom<Units>(
+    "hidingRadiusUnits",
+    "miles",
+    {
+        encode: JSON.stringify,
+        decode: JSON.parse,
+    },
+);
+export const disabledStations = persistentAtom<string[]>(
+    "disabledStations",
+    [],
+    {
+        encode: JSON.stringify,
+        decode: JSON.parse,
+    },
+);
+export const autoSave = persistentAtom<boolean>("autoSave", true, {
+    encode: JSON.stringify,
+    decode: JSON.parse,
+});
+export const save = () => {
+    questions.set([...questions.get()]);
+    const $hiderMode = hiderMode.get();
+
+    if ($hiderMode !== false) {
+        hiderMode.set({ ...$hiderMode });
+    }
+};
+
+/* Presets for custom questions (savable / sharable / editable) */
+export type CustomPreset = {
+    id: string;
+    name: string;
+    type: string;
+    data: any;
+    createdAt: string;
+};
+
+export const customPresets = persistentAtom<CustomPreset[]>(
+    "customPresets",
+    [],
+    {
+        encode: JSON.stringify,
+        decode: JSON.parse,
+    },
+);
+onSet(customPresets, ({ newValue }) => {
+    newValue.sort((a, b) => a.name.localeCompare(b.name));
+});
+
+export const saveCustomPreset = (
+    preset: Omit<CustomPreset, "id" | "createdAt">,
+) => {
+    const id =
+        typeof crypto !== "undefined" &&
+        typeof (crypto as any).randomUUID === "function"
+            ? (crypto as any).randomUUID()
+            : String(Date.now());
+    const p: CustomPreset = {
+        ...preset,
+        id,
+        createdAt: new Date().toISOString(),
+    };
+    customPresets.set([...customPresets.get(), p]);
+    return p;
+};
+
+export const updateCustomPreset = (
+    id: string,
+    updates: Partial<CustomPreset>,
+) => {
+    customPresets.set(
+        customPresets
+            .get()
+            .map((p) => (p.id === id ? { ...p, ...updates } : p)),
+    );
+};
+
+export const deleteCustomPreset = (id: string) => {
+    customPresets.set(customPresets.get().filter((p) => p.id !== id));
+};
+
+export const hidingZone = computed(
+    [
+        questions,
+        polyGeoJSON,
+        mapGeoLocation,
+        additionalMapGeoLocations,
+        disabledStations,
+        hidingRadius,
+        hidingRadiusUnits,
+        displayHidingZonesOptions,
+        useCustomStations,
+        customStations,
+        includeDefaultStations,
+        customPresets,
+        permanentOverlay,
+    ],
+    (
+        q,
+        geo,
+        loc,
+        altLoc,
+        disabledStations,
+        radius,
+        hidingRadiusUnits,
+        zoneOptions,
+        useCustom,
+        $customStations,
+        includeDefault,
+        presets,
+        $permanentOverlay,
+    ) => {
+        if (geo !== null) {
+            return {
+                ...geo,
+                questions: q,
+                disabledStations: disabledStations,
+                hidingRadius: radius,
+                hidingRadiusUnits,
+                zoneOptions: zoneOptions,
+                useCustomStations: useCustom,
+                customStations: $customStations,
+                includeDefaultStations: includeDefault,
+                presets: structuredClone(presets),
+                permanentOverlay: $permanentOverlay,
+            };
+        } else {
+            const $loc = structuredClone(loc);
+            $loc.properties.isHidingZone = true;
+            $loc.properties.questions = q;
+            return {
+                ...$loc,
+                disabledStations: disabledStations,
+                hidingRadius: radius,
+                hidingRadiusUnits,
+                alternateLocations: structuredClone(altLoc),
+                zoneOptions: zoneOptions,
+                useCustomStations: useCustom,
+                customStations: $customStations,
+                includeDefaultStations: includeDefault,
+                presets: structuredClone(presets),
+                permanentOverlay: $permanentOverlay,
+            };
+        }
+    },
+);
+
+export const drawingQuestionKey = atom<number>(-1);
+export const planningModeEnabled = persistentAtom<boolean>(
+    "planningModeEnabled",
+    false,
+    {
+        encode: JSON.stringify,
+        decode: JSON.parse,
+    },
+);
+export const autoZoom = persistentAtom<boolean>("autoZoom", true, {
+    encode: JSON.stringify,
+    decode: JSON.parse,
+});
+
+export const isLoading = atom<boolean>(false);
+
+export const baseTileLayer = persistentAtom<
+    "voyager" | "light" | "dark" | "transport" | "neighbourhood" | "osmcarto"
+>("baseTileLayer", "voyager");
+export const thunderforestApiKey = persistentAtom<string>(
+    "thunderforestApiKey",
+    "",
+    {
+        encode: (value: string) => value,
+        decode: (value: string) => value,
+    },
+);
+export const followMe = persistentAtom<boolean>("followMe", false, {
+    encode: JSON.stringify,
+    decode: JSON.parse,
+});
+export const defaultCustomQuestions = persistentAtom<boolean>(
+    "defaultCustomQuestions",
+    false,
+    {
+        encode: JSON.stringify,
+        decode: JSON.parse,
+    },
+);
+
+/** Always share via a short server-stored link instead of a long URL. */
+export const alwaysUseShortLinks = persistentAtom<boolean>(
+    "alwaysUseShortLinks",
+    false,
+    {
+        encode: JSON.stringify,
+        decode: JSON.parse,
+    },
+);
+
+export const showTutorial = persistentAtom<boolean>("showTutorials", true, {
+    encode: JSON.stringify,
+    decode: JSON.parse,
+});
+export const tutorialStep = atom<number>(0);
+
+export const customInitPreference = persistentAtom<"ask" | "blank" | "prefill">(
+    "customInitPreference",
+    "ask",
+    {
+        encode: JSON.stringify,
+        decode: JSON.parse,
+    },
+);
+
+export const allowGooglePlusCodes = persistentAtom<boolean>(
+    "allowGooglePlusCodes",
+    false,
+    {
+        encode: JSON.stringify,
+        decode: JSON.parse,
+    },
+);

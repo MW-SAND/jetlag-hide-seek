@@ -1,0 +1,138 @@
+name: CI
+
+on:
+    pull_request:
+    push:
+        branches: [main]
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+concurrency:
+    group: ci-${{ github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    test:
+        name: Lint, typecheck, unit + integration tests, e2e
+        runs-on: ubuntu-latest
+        timeout-minutes: 30
+        steps:
+            - uses: actions/checkout@v4
+            - uses: pnpm/action-setup@v4
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: 24
+                  cache: pnpm
+            - run: pnpm install --frozen-lockfile
+            - run: pnpm lint
+            - run: pnpm typecheck
+            - run: pnpm test
+              env:
+                  NODE_NO_WARNINGS: "1"
+            - run: pnpm build
+            - run: pnpm exec playwright install --with-deps chromium
+            - run: pnpm test:e2e
+            - name: Lighthouse budgets (mobile, simulated 4G)
+              run: |
+                  node e2e/serve.mjs &
+                  npx --yes wait-on@8 http://127.0.0.1:8090/healthz
+                  npx --yes @lhci/cli@0.15.x autorun --config=lighthouserc.json
+            - uses: actions/upload-artifact@v4
+              if: failure()
+              with:
+                  name: playwright-report
+                  path: |
+                      playwright-report
+                      test-results
+                  retention-days: 7
+
+    backup-compat:
+        name: Backup scripts vs. sqlite3 3.22 (Ubuntu 18.04)
+        runs-on: ubuntu-latest
+        timeout-minutes: 20
+        steps:
+            - uses: actions/checkout@v4
+            - uses: pnpm/action-setup@v4
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: 24
+                  cache: pnpm
+            - run: pnpm install --frozen-lockfile
+            - run: pnpm --filter @jetlag/server build
+            - name: Produce a live database (WAL active) with the real server
+              run: |
+                  mkdir -p live && touch live/.jetlag-volume
+                  DATA_DIR=$PWD/live PORT=8080 HOST=127.0.0.1 COOKIE_SECURE=false \
+                    node --disable-warning=ExperimentalWarning apps/server/dist/server.mjs &
+                  echo $! > server.pid
+                  npx --yes wait-on@8 http://127.0.0.1:8080/healthz
+                  node scripts/seed-game.mjs http://127.0.0.1:8080
+                  ls -la live
+            - name: Run backup/verify/restore in ubuntu:18.04
+              run: |
+                  sudo chown -R 1000:1000 live
+                  docker run --rm -v "$PWD/live:/live" -v "$PWD/deploy/homeserver:/deploy:ro" \
+                    ubuntu:18.04 bash /deploy/test/compat-test.sh
+            - run: kill "$(cat server.pid)" || true
+
+    container:
+        name: Container (amd64 + arm64 under QEMU)
+        runs-on: ubuntu-latest
+        timeout-minutes: 30
+        steps:
+            - uses: actions/checkout@v4
+            - name: Homeserver compose entry is valid for docker-compose v1
+              run: |
+                  docker run --rm -v "$PWD/deploy/homeserver:/w" -w /w docker/compose:1.29.2 \
+                    -f docker-compose.snippet.yml config --quiet
+            - uses: docker/setup-qemu-action@v3
+            - uses: docker/setup-buildx-action@v3
+            - name: Build amd64 + arm64
+              run: |
+                  for arch in amd64 arm64; do
+                    docker buildx build --platform linux/$arch --provenance=false \
+                      --build-arg APP_VERSION=ci-${GITHUB_SHA::7} \
+                      --cache-from type=gha --cache-to type=gha,mode=max \
+                      -t jetlag:$arch --load .
+                  done
+                  docker image ls jetlag
+            - name: Image size budget (< 120 MB)
+              run: |
+                  for arch in amd64 arm64; do
+                    size=$(docker image inspect jetlag:$arch --format '{{.Size}}')
+                    echo "$arch: $((size / 1024 / 1024)) MB"
+                    test "$size" -lt $((120 * 1024 * 1024))
+                  done
+            - name: Smoke test both architectures
+              run: |
+                  for arch in amd64 arm64; do
+                    echo "== $arch"
+                    docker volume create data-$arch
+                    docker run --rm -v data-$arch:/data alpine chown 1000:1000 /data
+                    # Start guard: must refuse to run without the marker file.
+                    if docker run --rm --platform linux/$arch -v data-$arch:/data jetlag:$arch; then
+                      echo "started without data marker"; exit 1
+                    fi
+                    docker run --rm -v data-$arch:/data --user 1000:1000 alpine touch /data/.jetlag-volume
+                    docker run -d --name app-$arch --platform linux/$arch --read-only --tmpfs /tmp \
+                      -v data-$arch:/data -e COOKIE_SECURE=false jetlag:$arch
+                    for i in $(seq 1 60); do
+                      status=$(docker inspect --format '{{.State.Health.Status}}' app-$arch)
+                      [ "$status" = healthy ] && break
+                      sleep 2
+                    done
+                    docker inspect --format 'health={{.State.Health.Status}}' app-$arch
+                    test "$(docker inspect --format '{{.State.Health.Status}}' app-$arch)" = healthy
+                    test "$(docker exec app-$arch id -u)" = 1000
+                    docker exec app-$arch uname -m
+                    start=$(date +%s)
+                    docker stop -t 30 app-$arch
+                    echo "stopped in $(( $(date +%s) - start ))s"
+                    docker logs app-$arch 2>&1 | tail -n 3
+                    docker logs app-$arch 2>&1 | grep -q '"msg":"stopped"'
+                    docker rm app-$arch
+                    owner=$(docker run --rm -v data-$arch:/data alpine stat -c %u /data/jetlag.db)
+                    test "$owner" = 1000
+                  done

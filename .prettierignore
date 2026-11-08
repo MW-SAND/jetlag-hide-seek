@@ -1,0 +1,8 @@
+pnpm-lock.yaml
+apps/web/tailwind.config.mjs
+apps/web/public/
+deploy/
+dist/
+coverage/
+playwright-report/
+test-results/
