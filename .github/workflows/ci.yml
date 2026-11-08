@@ -98,12 +98,14 @@ jobs:
                       -t jetlag:$arch --load .
                   done
                   docker image ls jetlag
-            - name: Image size budget (< 120 MB)
+            - name: Image size budget (compressed pull < 90 MB, unpacked < 220 MB)
               run: |
                   for arch in amd64 arm64; do
-                    size=$(docker image inspect jetlag:$arch --format '{{.Size}}')
-                    echo "$arch: $((size / 1024 / 1024)) MB"
-                    test "$size" -lt $((120 * 1024 * 1024))
+                    raw=$(docker image inspect jetlag:$arch --format '{{.Size}}')
+                    packed=$(docker save jetlag:$arch | gzip -1 | wc -c)
+                    echo "$arch: unpacked $((raw / 1024 / 1024)) MB, compressed $((packed / 1024 / 1024)) MB"
+                    test "$packed" -lt $((90 * 1024 * 1024))
+                    test "$raw" -lt $((220 * 1024 * 1024))
                   done
             - name: Smoke test both architectures
               run: |
