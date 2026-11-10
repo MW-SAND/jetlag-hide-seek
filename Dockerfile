@@ -36,6 +36,9 @@ ENV NODE_ENV=production \
 WORKDIR /app
 COPY --from=build /src/apps/server/dist/server.mjs ./server.mjs
 COPY --from=build /src/apps/web/dist ./public
+# /data must exist and belong to uid 1000 so fresh named volumes inherit that
+# ownership (bind mounts on the homeserver are chown'ed during setup).
+RUN mkdir -p /data && chown node:node /data
 # The official image's "node" user is uid/gid 1000 (= "jetson" on the host),
 # so files written to the bind mount are owned by the normal user, never root.
 USER node
