@@ -1,0 +1,210 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Design system
+ * - Dark, high-contrast UI over a light map; glass surfaces float on top.
+ * - Seekers = blue (primary), hiders = emerald, waiting = amber.
+ * - Touch targets ≥ 44px, radius 14–20px, safe-area aware for notched phones.
+ */
+
+html,
+body {
+    margin: 0;
+    width: 100%;
+    height: 100%;
+    overscroll-behavior: none;
+    -webkit-tap-highlight-color: transparent;
+}
+
+body {
+    font-family:
+        system-ui,
+        -apple-system,
+        "Segoe UI",
+        Roboto,
+        "Helvetica Neue",
+        Arial,
+        sans-serif;
+    -webkit-font-smoothing: antialiased;
+}
+
+@layer base {
+    :root,
+    .dark {
+        --background: 222 47% 7%;
+        --foreground: 210 40% 98%;
+        --card: 222 39% 11%;
+        --card-foreground: 210 40% 98%;
+        --popover: 222 39% 11%;
+        --popover-foreground: 210 40% 98%;
+        --primary: 217 91% 60%;
+        --primary-foreground: 0 0% 100%;
+        --secondary: 222 28% 18%;
+        --secondary-foreground: 210 40% 98%;
+        --muted: 222 28% 15%;
+        --muted-foreground: 215 20% 68%;
+        --accent: 222 28% 20%;
+        --accent-foreground: 210 40% 98%;
+        --destructive: 0 72% 51%;
+        --destructive-foreground: 0 0% 100%;
+        --border: 222 22% 21%;
+        --input: 222 22% 24%;
+        --ring: 217 91% 60%;
+        --radius: 0.875rem;
+        --chart-1: 217 91% 60%;
+        --chart-2: 160 84% 39%;
+        --chart-3: 38 92% 50%;
+        --chart-4: 271 81% 56%;
+        --chart-5: 347 77% 50%;
+        --sidebar-background: 222 39% 11%;
+        --sidebar-foreground: 210 40% 98%;
+        --sidebar-primary: 217 91% 60%;
+        --sidebar-primary-foreground: 0 0% 100%;
+        --sidebar-accent: 222 28% 18%;
+        --sidebar-accent-foreground: 210 40% 98%;
+        --sidebar-border: 222 22% 21%;
+        --sidebar-ring: 217 91% 60%;
+    }
+
+    * {
+        @apply border-border;
+    }
+
+    body {
+        @apply bg-background text-foreground;
+    }
+
+    h1,
+    h2,
+    h3 {
+        font-family: "Poppins", system-ui, sans-serif;
+    }
+}
+
+@layer components {
+    /* Floating glass panel used for bars, sheets and popovers over the map. */
+    .glass {
+        @apply border border-white/10 bg-slate-900/85 shadow-2xl shadow-black/40 backdrop-blur-xl;
+    }
+    .safe-top {
+        padding-top: env(safe-area-inset-top);
+    }
+    .safe-bottom {
+        padding-bottom: env(safe-area-inset-bottom);
+    }
+    .scrollbar-thin {
+        scrollbar-width: thin;
+        scrollbar-color: rgb(255 255 255 / 0.15) transparent;
+    }
+}
+
+/* ─── Leaflet ───────────────────────────────────────────────── */
+
+.leaflet-container {
+    height: 100%;
+    width: 100%;
+    background: #dfe3e8;
+    font-family: inherit;
+}
+
+.leaflet-bar,
+.leaflet-draw-toolbar.leaflet-bar {
+    border: 1px solid rgb(255 255 255 / 0.12) !important;
+    border-radius: 14px !important;
+    overflow: hidden;
+    box-shadow: 0 10px 30px rgb(0 0 0 / 0.35) !important;
+}
+
+.leaflet-bar a,
+.leaflet-bar a:hover,
+.leaflet-draw-toolbar a {
+    width: 40px !important;
+    height: 40px !important;
+    line-height: 40px !important;
+    background-color: rgb(15 23 42 / 0.88) !important;
+    color: #f8fafc !important;
+    border-bottom-color: rgb(255 255 255 / 0.1) !important;
+    backdrop-filter: blur(12px);
+}
+
+.leaflet-bar a:hover {
+    background-color: rgb(30 41 59 / 0.95) !important;
+}
+
+/* leaflet-draw's icons are dark sprites: invert them for the dark controls. */
+.leaflet-draw-toolbar a {
+    filter: invert(1) hue-rotate(180deg);
+    background-color: rgb(226 232 240 / 0.95) !important;
+}
+
+.leaflet-control-attribution {
+    border-radius: 8px 0 0 0;
+    background: rgb(255 255 255 / 0.75) !important;
+    font-size: 10px;
+}
+
+.leaflet-control-scale-line {
+    border-color: #334155;
+    background: rgb(255 255 255 / 0.7);
+}
+
+.leaflet-contextmenu {
+    border-radius: 12px;
+    overflow: hidden;
+    padding: 4px 0;
+    background: #0f172a;
+    color: #f8fafc;
+    border: 1px solid rgb(255 255 255 / 0.1);
+}
+
+.leaflet-contextmenu a.leaflet-contextmenu-item {
+    color: #f8fafc;
+    padding: 8px 14px;
+    font-size: 14px;
+}
+
+.leaflet-contextmenu a.leaflet-contextmenu-item.over {
+    background: #1e293b;
+    border: 0;
+}
+
+.selected-card-background-temporary {
+    @apply bg-slate-500;
+}
+
+/* Keep Leaflet's own controls clear of the floating top bar, the phone
+   bottom sheet (peek height) and the desktop side panel. */
+.leaflet-container .leaflet-top {
+    top: calc(64px + env(safe-area-inset-top));
+}
+
+@media (max-width: 1023px) {
+    .leaflet-container .leaflet-bottom {
+        bottom: var(--sheet-h, 148px);
+        transition: bottom 300ms ease-out;
+    }
+    .leaflet-container .leaflet-control-zoom {
+        display: none;
+    }
+}
+
+@media (min-width: 1024px) {
+    .leaflet-container .leaflet-left {
+        left: 412px;
+    }
+}
+
+.Toastify__toast-container {
+    z-index: 1700;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+    }
+}

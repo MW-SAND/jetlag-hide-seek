@@ -1,0 +1,40 @@
+{
+    "name": "jetlag-hide-seek",
+    "private": true,
+    "type": "module",
+    "packageManager": "pnpm@10.30.2",
+    "engines": {
+        "node": ">=24"
+    },
+    "scripts": {
+        "dev": "pnpm --parallel --filter @jetlag/server --filter @jetlag/web dev",
+        "build": "pnpm --filter @jetlag/web build && pnpm --filter @jetlag/server build",
+        "start": "node apps/server/dist/server.mjs",
+        "test": "vitest run",
+        "test:watch": "vitest",
+        "test:e2e": "playwright test",
+        "typecheck": "pnpm -r typecheck",
+        "lint": "eslint . && prettier --check .",
+        "format": "eslint --fix . && prettier --write ."
+    },
+    "devDependencies": {
+        "@eslint/js": "^9.25.1",
+        "@playwright/test": "^1.59.1",
+        "@types/node": "^24.0.0",
+        "eslint": "^9.25.1",
+        "eslint-config-prettier": "^10.0.1",
+        "eslint-plugin-react": "^7.37.4",
+        "eslint-plugin-react-hooks": "^5.2.0",
+        "eslint-plugin-simple-import-sort": "^12.1.1",
+        "globals": "^16.0.0",
+        "prettier": "3.5.3",
+        "typescript": "^5.8.3",
+        "typescript-eslint": "^8.31.0",
+        "vitest": "^3.1.4"
+    },
+    "pnpm": {
+        "onlyBuiltDependencies": [
+            "esbuild"
+        ]
+    }
+}

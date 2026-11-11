@@ -1,0 +1,42 @@
+{
+    "name": "@jetlag/geo",
+    "version": "1.0.0",
+    "private": true,
+    "type": "module",
+    "exports": {
+        ".": "./src/index.ts",
+        "./env": "./src/env.ts",
+        "./schema": "./src/schema.ts",
+        "./api": "./src/api/index.ts",
+        "./api/*": "./src/api/*.ts",
+        "./geo-utils": "./src/geo-utils/index.ts",
+        "./geo-utils/*": "./src/geo-utils/*.ts",
+        "./questions/*": "./src/questions/*.ts",
+        "./compute": "./src/compute.ts",
+        "./compute-types": "./src/compute-types.ts"
+    },
+    "scripts": {
+        "typecheck": "tsc -p tsconfig.json"
+    },
+    "dependencies": {
+        "@arcgis/core": "^4.32.10",
+        "@terraformer/arcgis": "^2.1.2",
+        "@turf/turf": "^7.2.0",
+        "d3-geo": "^3.1.1",
+        "d3-geo-projection": "^4.0.0",
+        "d3-geo-voronoi": "^2.1.0",
+        "lodash": "^4.17.21",
+        "nanostores": "^0.11.3",
+        "osmtogeojson": "3.0.0-beta.5",
+        "papaparse": "^5.5.3",
+        "zod": "^3.25.28"
+    },
+    "devDependencies": {
+        "@types/d3-geo": "^3.1.0",
+        "@types/geojson": "^7946.0.16",
+        "@types/leaflet": "^1.9.16",
+        "@types/lodash": "^4.17.15",
+        "@types/papaparse": "^5.5.2",
+        "@types/terraformer__arcgis": "^2.0.5"
+    }
+}

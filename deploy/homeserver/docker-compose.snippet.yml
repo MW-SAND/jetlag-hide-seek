@@ -1,0 +1,54 @@
+# jetlag-hide-seek — entry for ~/homeserver/docker-compose.yml
+#
+# Copy the `jetlag:` block (everything under `services:` below) into the
+# existing `services:` section. The `homeserver` network already exists there.
+# Requires compose file format 2.x (docker-compose v1) for `mem_limit`.
+# Replace the digest with the one printed by the release workflow summary.
+version: "2.4"
+
+services:
+  jetlag:
+    image: ghcr.io/mw-sand/jetlag-hide-seek:1.0.0@sha256:REPLACE_WITH_RELEASE_DIGEST
+    container_name: jetlag
+    restart: unless-stopped
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp
+    environment:
+      DATA_DIR: /data
+      TRUST_PROXY: "true"
+      COOKIE_SECURE: "true"
+      LOG_LEVEL: ${JETLAG_LOG_LEVEL:-info}
+      GAME_TTL_DAYS: ${JETLAG_GAME_TTL_DAYS:-30}
+      SHARE_TTL_DAYS: ${JETLAG_SHARE_TTL_DAYS:-180}
+      # Map-data (Overpass) cache in /data/cache/overpass: disk budget and age.
+      OVERPASS_CACHE_MB: ${JETLAG_OVERPASS_CACHE_MB:-200}
+      OVERPASS_CACHE_DAYS: ${JETLAG_OVERPASS_CACHE_DAYS:-7}
+    volumes:
+      # SQLite DB on the USB drive. The app refuses to start unless
+      # /mnt/backup/jetlag/.jetlag-volume exists, so it never runs against an
+      # empty folder when the drive is not mounted (restart retries until it is).
+      - /mnt/backup/jetlag:/data
+    networks:
+      - homeserver
+    # No `ports:` — Nginx Proxy Manager proxies to jetlag:8080.
+    mem_limit: 160m
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# Already present in the homeserver compose file; shown so this file is valid
+# on its own (`docker-compose -f docker-compose.snippet.yml config`).
+networks:
+  homeserver:
+    external: true
