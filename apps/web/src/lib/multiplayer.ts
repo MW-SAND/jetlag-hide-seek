@@ -24,6 +24,7 @@ import {
     multiplayerLoading,
     players,
 } from "./game-store";
+import { forgetRoom, rememberRoom } from "./preferences";
 
 export { subscribeToGame } from "./connection";
 export type { AppView, GameSession, Player } from "./game-store";
@@ -51,6 +52,7 @@ export const registerBeforeLeave = (fn: () => Promise<void>) => {
 };
 
 async function startSession(res: GameSessionResponse) {
+    rememberRoom(res.roomCode);
     gameSession.set({
         gameId: res.gameId,
         roomCode: res.roomCode,
@@ -135,6 +137,8 @@ export const startGame = () => changePhase("start");
 export const endGame = () => changePhase("end");
 
 function resetLocalState() {
+    const roomCode = gameSession.get()?.roomCode;
+    if (roomCode) forgetRoom(roomCode);
     closeConnection();
     gameSession.set(null);
     gameState.set(null);

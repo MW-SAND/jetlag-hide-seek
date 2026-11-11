@@ -98,7 +98,11 @@ ls <staging>/jetlag-*.db.age
 ## 6. Public access and play test
 
 - [ ] `https://jetlag-beta.3mgroup.eu` (temporary NPM host) loads on a phone over 4G
-- [ ] Two phones: create → join → start → ask → answer → end; live updates arrive
-      within a second; refresh mid-game rejoins
+- [ ] Two phones: create → join (invite link) → pick area → start → ask → answer → end;
+      live updates arrive within a second; refresh mid-game reconnects automatically
+- [ ] "My location" and "Invite players" work (they need the https address)
+- [ ] Map data comes through the server cache:
+      `curl -s -o /dev/null -D - "https://jetlag.3mgroup.eu/api/overpass?data=%5Bout%3Ajson%5D%3Bnode(1)%3Bout%3B" | grep -i x-cache`
+      → `MISS` the first time, `HIT` the second; `du -sh /mnt/backup/jetlag/cache` stays under the budget
 - [ ] Switch `jetlag.3mgroup.eu` DNS, remove the beta host
 - [ ] Stop the GitHub Pages deploy; after a stable week retire Supabase and the Pi keep-alive

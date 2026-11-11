@@ -56,6 +56,27 @@ export const vetoedQuestions = computed(committedQuestions, (qs) =>
     qs.filter((q) => q.veto !== null),
 );
 
+/**
+ * Which questions shape the map. Outside a game: all of them. In a game,
+ * seekers only learn from answered questions (unsent drafts appear as planning
+ * outlines); hiders preview their own answers. Vetoed questions never count.
+ */
+export function questionsForMap<T extends { data: unknown }>(
+    list: T[],
+    planningMode: boolean,
+): T[] {
+    if (!gameSession.get()) return list;
+    const isHider = currentPlayer.get()?.role === "hider";
+    const byId = new Map(committedQuestions.get().map((q) => [q.dbId, q]));
+    return list.filter((q) => {
+        const data = q.data as { _dbId?: string; drag?: boolean };
+        if (!data._dbId) return planningMode && !!data.drag;
+        const committed = byId.get(data._dbId);
+        if (!committed || committed.veto) return false;
+        return isHider || committed.answer !== null;
+    });
+}
+
 export function applyAnswerToQuestionData(
     questionType: string,
     questionData: Record<string, unknown>,

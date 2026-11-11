@@ -55,12 +55,12 @@ export default defineConfig({
                     },
                     {
                         urlPattern:
-                            /^https:\/\/[abcd]\.basemaps\.cartocdn\.com\//,
+                            /^https:\/\/server\.arcgisonline\.com\/ArcGIS\/rest\/services\//,
                         handler: "CacheFirst",
                         options: {
-                            cacheName: "tiles-carto",
+                            cacheName: "tiles-esri",
                             expiration: {
-                                maxEntries: 600,
+                                maxEntries: 800,
                                 maxAgeSeconds: 14 * 24 * 60 * 60,
                             },
                             cacheableResponse: { statuses: [0, 200] },

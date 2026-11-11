@@ -1,9 +1,21 @@
+import { ICON_COLORS } from "@jetlag/geo/api/constants";
 import { useStore } from "@nanostores/react";
-import { Check, Clock3, LockIcon, UnlockIcon, X } from "lucide-react";
-import { useRef, useState } from "react";
-import { VscChevronDown, VscShare, VscTrash } from "react-icons/vsc";
+import {
+    Ban,
+    Check,
+    ChevronDown,
+    Clock3,
+    Copy,
+    Loader2,
+    Lock,
+    Pencil,
+    Send,
+    Trash2,
+} from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { toast } from "react-toastify";
 
-import { CommitQuestionButton } from "@/components/SeekerQuestionControls";
+import { QuestionKindIcon } from "@/components/game/QuestionKindIcon";
 import {
     AlertDialog,
     AlertDialogAction,
@@ -16,25 +28,92 @@ import {
     AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogHeader,
-    DialogTitle,
-    DialogTrigger,
-} from "@/components/ui/dialog";
-import { Separator } from "@/components/ui/separator";
-import {
-    SidebarGroup,
-    SidebarGroupContent,
-    SidebarGroupLabel,
-    SidebarMenu,
-} from "@/components/ui/sidebar-l";
-import { isLoading, questions } from "@/lib/context";
+import { SidebarMenu } from "@/components/ui/sidebar-l";
+import { questionModified, questions } from "@/lib/context";
 import { currentPlayer, gameSession } from "@/lib/multiplayer";
-import { committedQuestions } from "@/lib/question-store";
+import { commitQuestion, committedQuestions } from "@/lib/question-store";
+import { focusQuestionKey } from "@/lib/ui-store";
 import { cn } from "@/lib/utils";
+
+type Status =
+    | { kind: "editing" }
+    | { kind: "locked" }
+    | { kind: "sent" }
+    | { kind: "answered"; label: string }
+    | { kind: "vetoed"; reason: string | null };
+
+/** What the hider answered, in words (from the answer-applied question data). */
+function answeredLabel(type: string | undefined, d: any): string {
+    switch (type) {
+        case "radius":
+            return d.within ? "Inside" : "Outside";
+        case "thermometer":
+            return d.warmer ? "Warmer" : "Colder";
+        case "matching":
+            return d.same ? "Same" : "Different";
+        case "measuring":
+            return d.hiderCloser ? "Closer" : "Further";
+        case "tentacles":
+            return d.location
+                ? String(d.location?.properties?.name ?? "A place")
+                : "Not in range";
+        default:
+            return "Answered";
+    }
+}
+
+function StatusChip({ status }: { status: Status }) {
+    const base =
+        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold";
+    switch (status.kind) {
+        case "editing":
+            return (
+                <span className={cn(base, "bg-white/10 text-slate-300")}>
+                    <Pencil className="h-3 w-3" /> Editing
+                </span>
+            );
+        case "locked":
+            return (
+                <span className={cn(base, "bg-white/10 text-slate-300")}>
+                    <Lock className="h-3 w-3" /> Locked
+                </span>
+            );
+        case "sent":
+            return (
+                <span className={cn(base, "bg-amber-500/15 text-amber-300")}>
+                    <Clock3 className="h-3 w-3" /> Waiting
+                </span>
+            );
+        case "answered":
+            return (
+                <span
+                    className={cn(
+                        base,
+                        "max-w-[9rem] bg-emerald-500/15 text-emerald-300",
+                    )}
+                    data-testid="answer-chip"
+                >
+                    <Check className="h-3 w-3 shrink-0" />
+                    <span className="truncate">{status.label}</span>
+                </span>
+            );
+        case "vetoed":
+            return (
+                <span
+                    className={cn(base, "bg-red-500/15 text-red-300")}
+                    title={status.reason ?? undefined}
+                >
+                    <Ban className="h-3 w-3" /> Vetoed
+                </span>
+            );
+    }
+}
+
+/** Only shown outside a multiplayer game (in a game the hider gives the answer). */
+export function SoloOnly({ children }: { children: React.ReactNode }) {
+    const session = useStore(gameSession);
+    return session ? null : <>{children}</>;
+}
 
 export const QuestionCard = ({
     children,
@@ -58,177 +137,176 @@ export const QuestionCard = ({
     setCollapsed?: (collapsed: boolean) => void;
 }) => {
     const [isCollapsed, setIsCollapsed] = useState(collapsed ?? false);
+    const [sending, setSending] = useState(false);
     const $questions = useStore(questions);
-    const $isLoading = useStore(isLoading);
     const $session = useStore(gameSession);
     const $player = useStore(currentPlayer);
-    const $committedQuestions = useStore(committedQuestions);
-    const copyButtonRef = useRef<HTMLButtonElement>(null);
+    const $committed = useStore(committedQuestions);
+    const $focus = useStore(focusQuestionKey);
+    const ref = useRef<HTMLElement>(null);
 
-    // In multiplayer, show "Send to Hider" button for seekers
-    const isMultiplayerSeeker =
-        $session?.phase === "playing" && $player?.role === "seeker";
-    const thisQuestion = isMultiplayerSeeker
-        ? $questions.find((q) => q.key === questionKey)
+    const question = $questions.find((q) => q.key === questionKey);
+    const data = (question?.data ?? {}) as any;
+    const dbId: string | undefined = data._dbId;
+    const committed = dbId
+        ? $committed.find((cq) => cq.dbId === dbId)
         : undefined;
-    const committedMatch =
-        thisQuestion && (thisQuestion.data as any)._dbId
-            ? $committedQuestions.find(
-                  (cq) => cq.dbId === (thisQuestion.data as any)._dbId,
-              )
-            : null;
-    const confirmed = committedMatch?.answer
-        ? (committedMatch.answer.answerData.confirmed as boolean)
-        : null;
+    const inGame = $session?.phase === "playing";
+    const isSeeker = $player?.role === "seeker";
+    const canEdit = !dbId && (!$session || (inGame && isSeeker));
+
+    const status: Status = committed?.veto
+        ? { kind: "vetoed", reason: committed.veto.reason }
+        : committed?.answer
+          ? { kind: "answered", label: answeredLabel(question?.id, data) }
+          : dbId
+            ? { kind: "sent" }
+            : locked === false
+              ? { kind: "editing" }
+              : { kind: "locked" };
+
+    // Scroll to and open a card that was just added.
+    useEffect(() => {
+        if ($focus !== questionKey) return;
+        setIsCollapsed(false);
+        setCollapsed?.(false);
+        requestAnimationFrame(() =>
+            ref.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
+        );
+        focusQuestionKey.set(null);
+    }, [$focus, questionKey]);
 
     const toggleCollapse = () => {
-        if (setCollapsed) {
-            setCollapsed(!isCollapsed);
-        }
-        setIsCollapsed((prevState) => !prevState);
+        setCollapsed?.(!isCollapsed);
+        setIsCollapsed((v) => !v);
     };
 
+    const copyJson = async () => {
+        try {
+            await navigator.clipboard.writeText(
+                JSON.stringify(question, null, 2),
+            );
+            toast.success("Question copied", { autoClose: 1500 });
+        } catch {
+            toast.error("Clipboard not available");
+        }
+    };
+
+    const send = async () => {
+        if (!question) return;
+        setSending(true);
+        try {
+            // Sending locks the question (the server only accepts locked ones).
+            if (data.drag) questionModified((data.drag = false));
+            await commitQuestion(question);
+            toast.success("Sent to the hiders", { autoClose: 1500 });
+        } catch (err: any) {
+            toast.error(err?.message || "Failed to send");
+        } finally {
+            setSending(false);
+        }
+    };
+
+    const color = data.color
+        ? ICON_COLORS[data.color as keyof typeof ICON_COLORS]
+        : undefined;
+
     return (
-        <>
-            <SidebarGroup className={className}>
-                <div className="relative">
-                    <button
-                        onClick={toggleCollapse}
-                        className={cn(
-                            "absolute top-2 left-2 text-white border rounded-md transition-all duration-500",
-                            isCollapsed && "-rotate-90",
+        <article
+            ref={ref}
+            data-testid="question-card"
+            data-question-key={questionKey}
+            data-question-type={question?.id}
+            data-status={status.kind}
+            className={cn(
+                "scroll-mt-3 overflow-hidden rounded-2xl border border-white/10 bg-white/[0.04]",
+                className,
+            )}
+        >
+            <button
+                type="button"
+                onClick={toggleCollapse}
+                aria-expanded={!isCollapsed}
+                className="flex min-h-14 w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-white/[0.03]"
+            >
+                <span
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/10"
+                    style={
+                        color
+                            ? { boxShadow: `inset 0 0 0 2px ${color}` }
+                            : undefined
+                    }
+                >
+                    <QuestionKindIcon
+                        kind={question?.id}
+                        className="h-4 w-4 text-white"
+                    />
+                </span>
+                <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-semibold text-white">
+                        {label?.replace(/\s+/g, " ").trim()}
+                    </span>
+                    {sub && (
+                        <span className="block truncate text-xs text-slate-400">
+                            {sub}
+                        </span>
+                    )}
+                </span>
+                <StatusChip status={status} />
+                <ChevronDown
+                    className={cn(
+                        "h-4 w-4 shrink-0 text-slate-400 transition-transform",
+                        isCollapsed && "-rotate-90",
+                    )}
+                />
+            </button>
+
+            {!isCollapsed && (
+                <div className="border-t border-white/5 px-1 pb-3">
+                    <SidebarMenu className="pt-1">{children}</SidebarMenu>
+
+                    <div className="mt-2 flex flex-wrap items-center gap-2 px-2">
+                        {canEdit && locked !== undefined && (
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setLocked!(!locked)}
+                                data-testid="toggle-lock"
+                            >
+                                {locked ? <Pencil /> : <Lock />}
+                                {locked ? "Edit" : "Lock"}
+                            </Button>
                         )}
-                    >
-                        <VscChevronDown />
-                    </button>
-                    <SidebarGroupLabel
-                        className="ml-8 mr-8 cursor-pointer"
-                        onClick={toggleCollapse}
-                    >
-                        {label} {sub && `(${sub})`}
-                    </SidebarGroupLabel>
-                    <SidebarGroupContent
-                        className={cn(
-                            "overflow-hidden transition-all duration-1000 max-h-[100rem]", // 100rem is arbitrary
-                            isCollapsed && "max-h-0",
-                        )}
-                    >
-                        <SidebarMenu>{children}</SidebarMenu>
-                        <div className="flex gap-2 pt-2 px-2 justify-center">
-                            <Dialog>
-                                <DialogTrigger asChild>
-                                    <Button variant="outline" size="sm">
-                                        <VscShare />
-                                    </Button>
-                                </DialogTrigger>
-                                <DialogContent>
-                                    <DialogHeader>
-                                        <DialogTitle className="text-2xl">
-                                            Share this Question!
-                                        </DialogTitle>
-                                        <DialogDescription>
-                                            Below you can access the JSON
-                                            representing the question. Send this
-                                            to another player for them to copy.
-                                            They can then click &ldquo;Paste
-                                            Question&rdquo; at the bottom of the
-                                            &ldquo;Questions&rdquo; sidebar.
-                                        </DialogDescription>
-                                    </DialogHeader>
-                                    <Button
-                                        variant="outline"
-                                        size="sm"
-                                        className="mb-2 sm:mb-0 transition-colors"
-                                        ref={copyButtonRef}
-                                        onClick={() => {
-                                            navigator.clipboard
-                                                .writeText(
-                                                    JSON.stringify(
-                                                        $questions.find(
-                                                            (q) =>
-                                                                q.key ===
-                                                                questionKey,
-                                                        ),
-                                                        null,
-                                                        4,
-                                                    ),
-                                                )
-                                                .then(() => {
-                                                    if (copyButtonRef.current) {
-                                                        copyButtonRef.current.textContent =
-                                                            "Copied!";
-                                                        copyButtonRef.current.classList.add(
-                                                            "bg-green-500",
-                                                        );
-                                                        setTimeout(() => {
-                                                            if (
-                                                                copyButtonRef.current
-                                                            ) {
-                                                                copyButtonRef.current.textContent =
-                                                                    "Copy to Clipboard";
-                                                                copyButtonRef.current.classList.remove(
-                                                                    "bg-green-500",
-                                                                );
-                                                            }
-                                                        }, 2000);
-                                                    }
-                                                })
-                                                .catch(() => {
-                                                    if (copyButtonRef.current) {
-                                                        copyButtonRef.current.textContent =
-                                                            "Failed to Copy";
-                                                        copyButtonRef.current.classList.add(
-                                                            "bg-red-500",
-                                                        );
-                                                        setTimeout(() => {
-                                                            if (
-                                                                copyButtonRef.current
-                                                            ) {
-                                                                copyButtonRef.current.textContent =
-                                                                    "Copy to Clipboard";
-                                                                copyButtonRef.current.classList.remove(
-                                                                    "bg-red-500",
-                                                                );
-                                                            }
-                                                        }, 2000);
-                                                    }
-                                                });
-                                        }}
-                                    >
-                                        Copy to Clipboard
-                                    </Button>
-                                    <textarea
-                                        className="w-full h-[300px] bg-slate-900 text-white rounded-md p-2"
-                                        readOnly
-                                        value={JSON.stringify(
-                                            $questions.find(
-                                                (q) => q.key === questionKey,
-                                            ),
-                                            null,
-                                            4,
-                                        )}
-                                    ></textarea>
-                                </DialogContent>
-                            </Dialog>
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={copyJson}
+                            aria-label="Copy question"
+                        >
+                            <Copy />
+                            Copy
+                        </Button>
+                        {!dbId && (
                             <AlertDialog>
                                 <AlertDialogTrigger asChild>
                                     <Button
-                                        variant="outline"
+                                        variant="ghost"
                                         size="sm"
-                                        disabled={$isLoading}
+                                        className="ml-auto text-red-300 hover:text-red-200"
+                                        data-testid="delete-question"
                                     >
-                                        <VscTrash />
+                                        <Trash2 />
+                                        Delete
                                     </Button>
                                 </AlertDialogTrigger>
                                 <AlertDialogContent>
                                     <AlertDialogHeader>
                                         <AlertDialogTitle>
-                                            Are you absolutely sure?
+                                            Delete this question?
                                         </AlertDialogTitle>
                                         <AlertDialogDescription>
-                                            This action cannot be undone. This
-                                            will permanently delete the
-                                            question.
+                                            It disappears from your map. This
+                                            can&apos;t be undone.
                                         </AlertDialogDescription>
                                     </AlertDialogHeader>
                                     <AlertDialogFooter>
@@ -236,81 +314,49 @@ export const QuestionCard = ({
                                             Cancel
                                         </AlertDialogCancel>
                                         <AlertDialogAction
-                                            onClick={() => {
-                                                questions.set([]);
-                                            }}
-                                        >
-                                            Delete All Questions
-                                        </AlertDialogAction>
-                                        <AlertDialogAction
-                                            onClick={() => {
+                                            data-testid="confirm-delete"
+                                            onClick={() =>
                                                 questions.set(
                                                     $questions.filter(
                                                         (q) =>
                                                             q.key !==
                                                             questionKey,
                                                     ),
-                                                );
-                                            }}
-                                            className="mb-2 sm:mb-0"
+                                                )
+                                            }
                                         >
-                                            Delete Question
+                                            Delete
                                         </AlertDialogAction>
                                     </AlertDialogFooter>
                                 </AlertDialogContent>
                             </AlertDialog>
-                            {locked !== undefined && (
-                                <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => setLocked!(!locked)}
-                                    disabled={$isLoading}
-                                >
-                                    {locked ? <LockIcon /> : <UnlockIcon />}
-                                </Button>
-                            )}
-                        </div>
-                        {isMultiplayerSeeker && thisQuestion && (
-                            <div className="px-2 pb-2">
-                                {(thisQuestion.data as any)._dbId ? (
-                                    <div className="flex items-center gap-1.5 text-xs px-1 py-1">
-                                        {committedMatch?.answer ? (
-                                            <>
-                                                <span
-                                                    className={cn(
-                                                        "inline-flex items-center gap-1",
-                                                        confirmed
-                                                            ? "text-emerald-400"
-                                                            : "text-red-400",
-                                                    )}
-                                                >
-                                                    {confirmed ? (
-                                                        <Check className="w-3 h-3" />
-                                                    ) : (
-                                                        <X className="w-3 h-3" />
-                                                    )}
-                                                    Answered:{" "}
-                                                    {confirmed ? "Yes" : "No"}
-                                                </span>
-                                            </>
-                                        ) : (
-                                            <span className="inline-flex items-center gap-1 text-amber-300">
-                                                <Clock3 className="w-3 h-3" />
-                                                Sent, waiting for hider
-                                            </span>
-                                        )}
-                                    </div>
-                                ) : (
-                                    <CommitQuestionButton
-                                        question={thisQuestion}
-                                    />
-                                )}
-                            </div>
                         )}
-                    </SidebarGroupContent>
+                    </div>
+
+                    {inGame && isSeeker && !dbId && (
+                        <div className="px-2 pt-3">
+                            <Button
+                                className="w-full"
+                                onClick={send}
+                                disabled={sending}
+                                data-testid="send-question"
+                            >
+                                {sending ? (
+                                    <Loader2 className="animate-spin" />
+                                ) : (
+                                    <Send />
+                                )}
+                                {sending ? "Sending…" : "Send to hider"}
+                            </Button>
+                        </div>
+                    )}
+                    {committed?.veto?.reason && (
+                        <p className="mx-2 mt-3 rounded-xl bg-red-500/10 px-3 py-2 text-xs text-red-200">
+                            Veto reason: {committed.veto.reason}
+                        </p>
+                    )}
                 </div>
-            </SidebarGroup>
-            <Separator className="h-1" />
-        </>
+            )}
+        </article>
     );
 };

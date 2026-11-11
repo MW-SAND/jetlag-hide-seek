@@ -8,19 +8,22 @@ SQLite (`node:sqlite`, no native modules). The production build is one file,
 
 All environment variables are optional.
 
-| Variable              | Default   | Meaning                                                                                            |
-| --------------------- | --------- | -------------------------------------------------------------------------------------------------- |
-| `PORT`                | `8080`    | HTTP port                                                                                          |
-| `HOST`                | `0.0.0.0` | Bind address                                                                                       |
-| `DATA_DIR`            | `/data`   | Directory holding `jetlag.db`                                                                      |
-| `REQUIRE_DATA_MARKER` | `true`    | Refuse to start unless `$DATA_DIR/.jetlag-volume` exists (protects against an unmounted USB drive) |
-| `STATIC_DIR`          | _(none)_  | Built web app to serve (`/app/public` in the image)                                                |
-| `TRUST_PROXY`         | `true`    | Client IP = last `X-Forwarded-For` hop (Nginx Proxy Manager). Used for rate limits only            |
-| `COOKIE_SECURE`       | `true`    | `Secure` flag on the identity cookie; set `false` for plain-http local runs                        |
-| `LOG_LEVEL`           | `info`    | `debug` / `info` / `warn` / `error` (one JSON line per event)                                      |
-| `GAME_TTL_DAYS`       | `30`      | Games are deleted this long after creation                                                         |
-| `SHARE_TTL_DAYS`      | `180`     | Short share links expire after this                                                                |
-| `SSE_HEARTBEAT_MS`    | `25000`   | Keep-alive comment interval on event streams                                                       |
+| Variable              | Default          | Meaning                                                                                             |
+| --------------------- | ---------------- | --------------------------------------------------------------------------------------------------- |
+| `PORT`                | `8080`           | HTTP port                                                                                           |
+| `HOST`                | `0.0.0.0`        | Bind address                                                                                        |
+| `DATA_DIR`            | `/data`          | Directory holding `jetlag.db` and the disposable map-data cache (`cache/`)                          |
+| `REQUIRE_DATA_MARKER` | `true`           | Refuse to start unless `$DATA_DIR/.jetlag-volume` exists (protects against an unmounted USB drive)  |
+| `STATIC_DIR`          | _(none)_         | Built web app to serve (`/app/public` in the image)                                                 |
+| `TRUST_PROXY`         | `true`           | Client IP = last `X-Forwarded-For` hop (Nginx Proxy Manager). Used for rate limits only             |
+| `COOKIE_SECURE`       | `true`           | `Secure` flag on the identity cookie; set `false` for plain-http local runs                         |
+| `LOG_LEVEL`           | `info`           | `debug` / `info` / `warn` / `error` (one JSON line per event)                                       |
+| `GAME_TTL_DAYS`       | `30`             | Games are deleted this long after creation                                                          |
+| `SHARE_TTL_DAYS`      | `180`            | Short share links expire after this                                                                 |
+| `SSE_HEARTBEAT_MS`    | `25000`          | Keep-alive comment interval on event streams                                                        |
+| `OVERPASS_UPSTREAMS`  | 3 public mirrors | Comma-separated Overpass interpreter URLs, tried in order (failover)                                |
+| `OVERPASS_CACHE_MB`   | `200`            | Disk budget for cached Overpass answers in `$DATA_DIR/cache/overpass` (least recently used evicted) |
+| `OVERPASS_CACHE_DAYS` | `7`              | Cached Overpass answers older than this are fetched again                                           |
 
 ## API
 
@@ -31,8 +34,19 @@ The full contract (paths, request/response schemas, error codes) lives in
   protection; the web client always does).
 - Errors are `{ "error": { "code", "message" } }` with matching HTTP status.
 - Rate limits per client IP: create game 20/10 min, join 60/10 min, share
-  links 30/10 min, any other change 600/min.
+  links 30/10 min, map data 300/min, any other change 600/min.
 - Bodies are limited to 5 MB; share payloads to 1 MB.
+
+### Map data (Overpass proxy)
+
+`GET /api/overpass?data=<query>` (or `POST` with a form body for long
+queries) forwards OpenStreetMap queries to the public Overpass servers and
+caches the answers gzipped on disk. Identical queries from all players are
+fetched once (in-flight requests are shared, at most 2 upstream at a time),
+mirrors are tried in order, and Overpass "runtime error" answers (timeouts)
+are passed through but never cached (`X-Cache: BYPASS`). This keeps games
+working when a public server rate-limits, and makes repeat loads instant.
+The cache is disposable: deleting `$DATA_DIR/cache` is always safe.
 
 ### Realtime
 

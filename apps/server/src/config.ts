@@ -13,6 +13,9 @@ export interface Config {
     cookieSecure: boolean;
     heartbeatMs: number;
     version: string;
+    overpassUpstreams: string[];
+    overpassCacheBytes: number;
+    overpassCacheTtlMs: number;
 }
 
 const bool = (value: string | undefined, fallback: boolean) => {
@@ -48,5 +51,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
         cookieSecure: bool(env.COOKIE_SECURE, true),
         heartbeatMs: num(env.SSE_HEARTBEAT_MS, 25_000),
         version: env.APP_VERSION || process.env.APP_VERSION || "dev",
+        overpassUpstreams: (
+            env.OVERPASS_UPSTREAMS || DEFAULT_OVERPASS_UPSTREAMS.join(",")
+        )
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean),
+        overpassCacheBytes: num(env.OVERPASS_CACHE_MB, 200) * 1024 * 1024,
+        overpassCacheTtlMs: num(env.OVERPASS_CACHE_DAYS, 7) * DAY,
     };
 }
+
+export const DEFAULT_OVERPASS_UPSTREAMS = [
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+];

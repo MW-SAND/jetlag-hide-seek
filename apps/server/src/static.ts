@@ -31,13 +31,14 @@ const NO_CACHE = new Set([
 ]);
 
 /**
- * Content-Security-Policy for the HTML document. External hosts: map tiles,
- * Overpass, Photon geocoder and the ArcGIS geometry WASM.
+ * Content-Security-Policy for the HTML document. External hosts: map tiles
+ * (Esri, OpenStreetMap, Thunderforest), the direct-Overpass last-resort
+ * fallback and the Photon geocoder. ArcGIS WASM is served from our origin.
  */
 export const CSP = [
     "default-src 'self'",
-    "img-src 'self' data: blob: https://*.basemaps.cartocdn.com https://*.tile.openstreetmap.org https://tile.openstreetmap.org https://server.arcgisonline.com https://*.arcgisonline.com https://*.thunderforest.com https://tile.thunderforest.com",
-    "connect-src 'self' https://overpass-api.de https://overpass.private.coffee https://photon.komoot.io https://*.basemaps.cartocdn.com https://*.tile.openstreetmap.org https://tile.openstreetmap.org",
+    "img-src 'self' data: blob: https://server.arcgisonline.com https://*.arcgisonline.com https://tile.openstreetmap.org https://*.tile.openstreetmap.org https://tile.thunderforest.com https://*.thunderforest.com",
+    "connect-src 'self' https://overpass-api.de https://photon.komoot.io https://server.arcgisonline.com https://tile.openstreetmap.org https://tile.thunderforest.com",
     "worker-src 'self' blob:",
     "style-src 'self' 'unsafe-inline'",
     "script-src 'self' 'wasm-unsafe-eval'",

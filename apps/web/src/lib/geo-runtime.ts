@@ -10,21 +10,23 @@ import {
     countingNotifier,
 } from "@jetlag/geo/compute-types";
 import { setNotifier } from "@jetlag/geo/env";
-import { type Id, toast } from "react-toastify";
+import { toast } from "react-toastify";
 
+import { startLoading } from "@/lib/ui-store";
 import type { WorkerInbound, WorkerOutbound } from "@/workers/geo-protocol";
 
+// Errors are toasts; "loading…" messages go to the small status pill.
 setNotifier(
     countingNotifier({
         error: (message, options) => {
             toast.error(message, options);
         },
-        promise: (promise, messages) =>
-            messages.pending
-                ? (toast.promise(promise, {
-                      pending: messages.pending,
-                  }) as typeof promise)
-                : promise,
+        promise: (promise, messages) => {
+            if (!messages.pending) return promise;
+            const done = startLoading(messages.pending);
+            promise.finally(done).catch(() => {});
+            return promise;
+        },
     }),
 );
 
@@ -37,7 +39,7 @@ let worker: Worker | null = null;
 let workerBroken = false;
 let nextId = 0;
 const pending = new Map<number, Pending>();
-const workerToasts = new Map<number, Id>();
+const workerLoading = new Map<number, () => void>();
 
 function getWorker(): Worker | null {
     if (workerBroken || typeof Worker === "undefined") return null;
@@ -65,15 +67,14 @@ function getWorker(): Worker | null {
                 toast.error(message.message, { toastId: message.toastId });
                 return;
             case "toast-pending":
-                workerToasts.set(
+                workerLoading.set(
                     message.toastKey,
-                    toast.loading(message.message),
+                    startLoading(message.message),
                 );
                 return;
             case "toast-done": {
-                const id = workerToasts.get(message.toastKey);
-                if (id !== undefined) toast.dismiss(id);
-                workerToasts.delete(message.toastKey);
+                workerLoading.get(message.toastKey)?.();
+                workerLoading.delete(message.toastKey);
                 return;
             }
         }

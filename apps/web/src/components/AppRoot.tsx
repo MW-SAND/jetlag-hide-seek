@@ -34,8 +34,9 @@ export function AppRoot() {
     const syncStarted = useRef(false);
 
     useEffect(() => {
-        // Opening the app always lands on the menu. A room code in the hash
-        // pre-fills the Join form and is then removed from the URL.
+        // Opening the app lands on the menu (or reconnects, see LandingPage).
+        // The room code from the hash pre-fills the Join form and is removed
+        // from the URL.
         if (initialRoomCode) {
             window.history.replaceState(
                 {},

@@ -30,7 +30,7 @@ import {
     polyGeoJSON,
     questions,
 } from "./context";
-import { gameSession, gameState } from "./game-store";
+import { gameSession, gameState, syncReady } from "./game-store";
 import { registerBeforeLeave } from "./multiplayer";
 import {
     answerDraftSelections,
@@ -82,6 +82,8 @@ interface Pending {
 interface ActiveSync {
     gameId: string;
     initialized: boolean;
+    /** The hider's starting spot has been placed (or loaded) for this game. */
+    hiderPlaced: boolean;
     geoVersions: Partial<Record<GeoField, number>>;
     questionsSignature: string | null;
     unsubscribers: (() => void)[];
@@ -179,7 +181,15 @@ async function reconcileGeo(sync: ActiveSync, state: GameState) {
             const { value } = await api.geoField(sync.gameId, field);
             if (active !== sync) return;
             if (value === null || value === undefined) {
-                synced.set(key, stableStringify(value));
+                // Cleared on the server (e.g. no custom area): drop any stale
+                // local value left over from an earlier game.
+                if (!amHost && field !== "mapGeoLocation") {
+                    const before = store.get();
+                    setFromRemote(key, store, null);
+                    if (field === "polyGeoJSON" && before) mapGeoJSON.set(null);
+                } else {
+                    synced.set(key, stableStringify(value));
+                }
                 continue;
             }
             const before = stableStringify(store.get());
@@ -215,27 +225,56 @@ function reconcileHiderLocation(sync: ActiveSync, state: GameState) {
     if (state.you.role !== "hider") return;
     const loc = state.hiderLocation;
     if (loc) {
+        sync.hiderPlaced = true;
         setFromRemote("hiderLocation", hiderMode, {
             latitude: loc.lat,
             longitude: loc.lng,
         });
         return;
     }
-    if (sync.initialized) return;
-    let current = hiderMode.get();
-    if (current === false) {
-        // No saved location yet — default to the map centre so the hider pin
-        // appears immediately. mapGeoLocation stores [lat, lng] (Leaflet order).
-        const [latitude, longitude] = mapGeoLocation.get().geometry.coordinates;
-        current = { latitude, longitude };
-        applyingRemote++;
-        try {
-            hiderMode.set(current);
-        } finally {
-            applyingRemote--;
-        }
+    if (sync.hiderPlaced) return;
+    // Wait until the play area is known: the host uploads it when the game
+    // starts, and a locally saved area may belong to another game or city.
+    const areaKnown =
+        state.you.isHost || (state.geoVersions.mapGeoLocation ?? 0) > 0;
+    if (!areaKnown) return;
+    sync.hiderPlaced = true;
+    const current = areaCenter();
+    applyingRemote++;
+    try {
+        hiderMode.set(current);
+    } finally {
+        applyingRemote--;
     }
     pushHiderLocation(sync.gameId, current, true);
+}
+
+function areaCenter(): { latitude: number; longitude: number } {
+    const poly = polyGeoJSON.get() as any;
+    if (poly) {
+        let minLat = Infinity,
+            minLng = Infinity,
+            maxLat = -Infinity,
+            maxLng = -Infinity;
+        const visit = (c: any) => {
+            if (typeof c[0] === "number") {
+                minLng = Math.min(minLng, c[0]);
+                maxLng = Math.max(maxLng, c[0]);
+                minLat = Math.min(minLat, c[1]);
+                maxLat = Math.max(maxLat, c[1]);
+            } else c.forEach(visit);
+        };
+        const features = poly.features ?? [poly];
+        for (const f of features) visit((f.geometry ?? f).coordinates ?? []);
+        if (Number.isFinite(minLat))
+            return {
+                latitude: (minLat + maxLat) / 2,
+                longitude: (minLng + maxLng) / 2,
+            };
+    }
+    // mapGeoLocation stores [lat, lng] (Leaflet order).
+    const [latitude, longitude] = mapGeoLocation.get().geometry.coordinates;
+    return { latitude, longitude };
 }
 
 function reconcileQuestions(sync: ActiveSync, state: GameState) {
@@ -289,12 +328,14 @@ function reconcileQuestions(sync: ActiveSync, state: GameState) {
 async function onState(sync: ActiveSync, state: GameState) {
     if (active !== sync || state.game.id !== sync.gameId) return;
     reconcileSettings(sync, state);
-    reconcileHiderLocation(sync, state);
     reconcileQuestions(sync, state);
-    const geo = reconcileGeo(sync, state);
+    // The hider's default spot depends on the play area, so load it first.
+    await reconcileGeo(sync, state);
+    if (active !== sync) return;
+    reconcileHiderLocation(sync, state);
     if (!sync.initialized) {
-        await geo;
-        if (active === sync) sync.initialized = true;
+        sync.initialized = true;
+        syncReady.set(true);
     }
 }
 
@@ -386,11 +427,18 @@ export function enterGame(gameId: string) {
     const sync: ActiveSync = {
         gameId,
         initialized: false,
+        hiderPlaced: false,
         geoVersions: {},
         questionsSignature: null,
         unsubscribers: [],
     };
     active = sync;
+    syncReady.set(false);
+    // Never leave the map blank if the server is slow: compute anyway after 8 s.
+    const fallback = setTimeout(() => {
+        if (active === sync) syncReady.set(true);
+    }, 8000);
+    sync.unsubscribers.push(() => clearTimeout(fallback));
     watchLocalStores(sync);
 
     let queue = Promise.resolve();
@@ -412,6 +460,7 @@ export function exitGame() {
     void flushPendingWrites();
     active.unsubscribers.forEach((unsub) => unsub());
     active = null;
+    syncReady.set(false);
     unregisterFlush?.();
     unregisterFlush = null;
 }

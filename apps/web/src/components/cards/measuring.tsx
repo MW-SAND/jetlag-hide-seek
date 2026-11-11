@@ -24,14 +24,13 @@ import {
     displayHidingZones,
     drawingQuestionKey,
     hiderMode,
-    isLoading,
     questionModified,
     questions,
     triggerLocalRefresh,
 } from "@/lib/context";
 import { cn } from "@/lib/utils";
 
-import { QuestionCard } from "./base";
+import { QuestionCard, SoloOnly } from "./base";
 
 export const MeasuringQuestionComponent = ({
     data,
@@ -49,7 +48,6 @@ export const MeasuringQuestionComponent = ({
     const $questions = useStore(questions);
     const $displayHidingZones = useStore(displayHidingZones);
     const $drawingQuestionKey = useStore(drawingQuestionKey);
-    const $isLoading = useStore(isLoading);
     const $customInitPref = useStore(customInitPreference);
     const [customDialogOpen, setCustomDialogOpen] = React.useState(false);
     const label = `Measuring
@@ -108,7 +106,7 @@ export const MeasuringQuestionComponent = ({
                                         drawingQuestionKey.set(-1);
                                     }
                                 }}
-                                disabled={!data.drag || $isLoading}
+                                disabled={!data.drag}
                             />
                             and use the buttons at the bottom left of the map.
                         </p>
@@ -253,7 +251,7 @@ export const MeasuringQuestionComponent = ({
                         data.type = value;
                         questionModified();
                     }}
-                    disabled={!data.drag || $isLoading}
+                    disabled={!data.drag}
                 />
             </SidebarMenuItem>
             {questionSpecific}
@@ -270,36 +268,33 @@ export const MeasuringQuestionComponent = ({
                     }
                     questionModified();
                 }}
-                disabled={!data.drag || $isLoading}
+                disabled={!data.drag}
             />
-            <div className="flex gap-2 items-center p-2">
-                <Label
-                    className={cn(
-                        "font-semibold text-lg",
-                        $isLoading && "text-muted-foreground",
-                    )}
-                >
-                    Result
-                </Label>
-                <ToggleGroup
-                    className="grow"
-                    type="single"
-                    value={data.hiderCloser ? "closer" : "further"}
-                    onValueChange={(value: "closer" | "further") =>
-                        questionModified(
-                            (data.hiderCloser = value === "closer"),
-                        )
-                    }
-                    disabled={!!$hiderMode || !data.drag || $isLoading}
-                >
-                    <ToggleGroupItem value="further">
-                        Hider Further
-                    </ToggleGroupItem>
-                    <ToggleGroupItem value="closer">
-                        Hider Closer
-                    </ToggleGroupItem>
-                </ToggleGroup>
-            </div>
+            <SoloOnly>
+                <div className="flex gap-2 items-center p-2">
+                    <Label className={cn("font-semibold text-lg")}>
+                        Result
+                    </Label>
+                    <ToggleGroup
+                        className="grow"
+                        type="single"
+                        value={data.hiderCloser ? "closer" : "further"}
+                        onValueChange={(value: "closer" | "further") =>
+                            questionModified(
+                                (data.hiderCloser = value === "closer"),
+                            )
+                        }
+                        disabled={!!$hiderMode || !data.drag}
+                    >
+                        <ToggleGroupItem value="further">
+                            Hider Further
+                        </ToggleGroupItem>
+                        <ToggleGroupItem value="closer">
+                            Hider Closer
+                        </ToggleGroupItem>
+                    </ToggleGroup>
+                </div>
+            </SoloOnly>
         </QuestionCard>
     );
 };

@@ -3,6 +3,7 @@ import { useStore } from "@nanostores/react";
 import {
     ClipboardCopyIcon,
     ClipboardPasteIcon,
+    Crosshair,
     EditIcon,
     LocateIcon,
 } from "lucide-react";
@@ -13,7 +14,11 @@ import { toast } from "react-toastify";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useDebounce } from "@/hooks/useDebounce";
-import { allowGooglePlusCodes, isLoading } from "@/lib/context";
+import {
+    allowGooglePlusCodes,
+    isLoading,
+    leafletMapContext,
+} from "@/lib/context";
 import { cn } from "@/lib/utils";
 
 import { Button } from "./ui/button";
@@ -110,22 +115,29 @@ const LatLngEditForm = ({
     const googlePlusCodesRef = useRef<HTMLInputElement>(null);
 
     useEffect(() => {
-        if (debouncedValue === "") {
+        if (debouncedValue.trim() === "") {
             setResults([]);
+            setError(false);
             return;
-        } else {
-            setLoading(true);
-            setResults([]);
-            geocode(debouncedValue, "en", false)
-                .then((x) => {
-                    setResults(x);
-                    setLoading(false);
-                })
-                .catch(() => {
-                    setError(true);
-                    setLoading(false);
-                });
         }
+        let cancelled = false;
+        setLoading(true);
+        setError(false);
+        setResults([]);
+        geocode(debouncedValue.trim(), "en", false)
+            .then((x) => {
+                if (cancelled) return;
+                setResults(x);
+                setLoading(false);
+            })
+            .catch(() => {
+                if (cancelled) return;
+                setError(true);
+                setLoading(false);
+            });
+        return () => {
+            cancelled = true;
+        };
     }, [debouncedValue]);
 
     const _latlngLabels = results.map((r) => determineName(r));
@@ -148,7 +160,8 @@ const LatLngEditForm = ({
             <Command shouldFilter={false}>
                 <CommandInput
                     placeholder="Search place..."
-                    onKeyUp={(x) => setInputValue(x.currentTarget.value)}
+                    value={inputValue}
+                    onValueChange={setInputValue}
                     disabled={disabled}
                 />
                 <CommandList>
@@ -330,35 +343,29 @@ export const LatitudeLongitude = ({
     disabled?: boolean;
     inlineEdit?: boolean;
 }) => {
-    const $isLoading = useStore(isLoading);
-
-    const color = colorName ? ICON_COLORS[colorName] : "transparent";
+    const color = colorName ? ICON_COLORS[colorName] : undefined;
 
     return (
         <>
             <SidebarMenuItem
-                style={{
-                    backgroundColor: color,
-                }}
-                className={cn(
-                    "p-2 rounded-md space-y-1 mt-2",
-                    $isLoading && "brightness-50",
-                )}
+                className="mt-2 rounded-xl border border-white/10 bg-white/[0.03] p-2.5"
+                style={color ? { borderLeft: `4px solid ${color}` } : undefined}
+                data-testid="latlng-picker"
             >
                 {!inlineEdit && (
-                    <div
-                        className={cn(
-                            "flex justify-between items-center",
-                            $isLoading && "opacity-50",
-                        )}
-                        style={{
-                            color: colorName === "gold" ? "black" : undefined,
-                        }}
-                    >
-                        <div className="text-2xl font-semibold font-poppins">
-                            {label}
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                        <div className="flex min-w-0 items-center gap-2">
+                            {color && (
+                                <span
+                                    className="h-2.5 w-2.5 shrink-0 rounded-full"
+                                    style={{ backgroundColor: color }}
+                                />
+                            )}
+                            <span className="truncate text-sm font-semibold text-white">
+                                {label}
+                            </span>
                         </div>
-                        <div className="tabular-nums text-right text-sm font-oxygen">
+                        <div className="shrink-0 text-right font-mono text-[11px] leading-tight tabular-nums text-slate-400">
                             <div>
                                 {Math.abs(latitude).toFixed(5)}
                                 {"° "}
@@ -373,12 +380,7 @@ export const LatitudeLongitude = ({
                     </div>
                 )}
 
-                <div
-                    className={cn(
-                        !inlineEdit &&
-                            "flex justify-center gap-2 *:max-w-12 *:w-[20%]",
-                    )}
-                >
+                <div className={cn(!inlineEdit && "flex flex-wrap gap-1.5")}>
                     {inlineEdit ? (
                         <div className="flex flex-col gap-2 w-full mb-2">
                             <LatLngEditForm
@@ -394,7 +396,9 @@ export const LatitudeLongitude = ({
                                 <Button
                                     disabled={disabled}
                                     variant="outline"
+                                    size="icon-sm"
                                     title="Edit coordinates"
+                                    aria-label="Edit coordinates"
                                 >
                                     <EditIcon />
                                 </Button>
@@ -428,9 +432,34 @@ export const LatitudeLongitude = ({
                     >
                         <Button
                             variant="outline"
+                            size="sm"
+                            disabled={disabled}
+                            title="Move to the centre of the map"
+                            data-testid="latlng-map-centre"
                             onClick={() => {
-                                if (!navigator || !navigator.geolocation)
-                                    return alert("Geolocation not supported");
+                                const map = leafletMapContext.get();
+                                if (!map) return;
+                                const c = map.getCenter();
+                                onChange(c.lat, c.lng);
+                            }}
+                        >
+                            <Crosshair />
+                            Map centre
+                        </Button>
+                        <Button
+                            variant="outline"
+                            size="icon-sm"
+                            aria-label="Set to my location"
+                            onClick={() => {
+                                if (
+                                    !navigator.geolocation ||
+                                    !window.isSecureContext
+                                ) {
+                                    toast.error(
+                                        "Location needs a secure (https) connection on this device.",
+                                    );
+                                    return;
+                                }
 
                                 isLoading.set(true);
 
@@ -471,6 +500,8 @@ export const LatitudeLongitude = ({
                         </Button>
                         <Button
                             variant="outline"
+                            size="icon-sm"
+                            aria-label="Paste coordinates"
                             onClick={() => {
                                 if (!navigator || !navigator.clipboard) {
                                     toast.error(
@@ -520,6 +551,8 @@ export const LatitudeLongitude = ({
                         </Button>
                         <Button
                             variant="outline"
+                            size="icon-sm"
+                            aria-label="Copy coordinates"
                             onClick={() => {
                                 if (!navigator || !navigator.clipboard) {
                                     toast.error(

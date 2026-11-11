@@ -6,8 +6,13 @@ import { snapshotGeoEnv } from "@jetlag/geo/env";
 import { useStore } from "@nanostores/react";
 import * as turf from "@turf/turf";
 import * as L from "leaflet";
-import { useEffect, useMemo } from "react";
-import { MapContainer, ScaleControl, TileLayer } from "react-leaflet";
+import { useEffect, useMemo, useRef } from "react";
+import {
+    MapContainer,
+    ScaleControl,
+    TileLayer,
+    ZoomControl,
+} from "react-leaflet";
 import { toast } from "react-toastify";
 
 import {
@@ -16,6 +21,7 @@ import {
     animateMapMovements,
     autoZoom,
     baseTileLayer,
+    drawingQuestionKey,
     followMe,
     hiderMode,
     isLoading,
@@ -24,17 +30,19 @@ import {
     mapGeoLocation,
     permanentOverlay,
     planningModeEnabled,
+    polyGeoJSON,
     questionFinishedMapData,
     questions,
     thunderforestApiKey,
     triggerLocalRefresh,
 } from "@/lib/context";
+import { gameSession, isHost, syncReady } from "@/lib/game-store";
 import { ComputeCancelled, computeMapAsync } from "@/lib/geo-runtime";
+import { questionsForMap } from "@/lib/question-store";
+import { resolveTileStyle } from "@/lib/tiles";
 import { cn } from "@/lib/utils";
 
 import { DraggableMarkers } from "./DraggableMarkers";
-import { LeafletFullScreenButton } from "./LeafletFullScreenButton";
-import { MapPrint } from "./MapPrint";
 import { PolygonDraw } from "./PolygonDraw";
 
 // Module-level layer tracking (O(1) layer removal instead of eachLayer iteration)
@@ -43,88 +51,67 @@ let eliminationLayer: L.GeoJSON | null = null;
 const questionLayers = new globalThis.Map<number | string, L.GeoJSON>();
 
 const getTileLayer = (tileLayer: string, thunderforestApiKey: string) => {
-    switch (tileLayer) {
-        case "light":
-            return (
-                <TileLayer
-                    attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors; &copy; <a href="https://carto.com/attributions">CARTO</a>; Powered by Esri and Turf.js'
-                    url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
-                    subdomains="abcd"
-                    maxZoom={20} // This technically should be 6, but once the ratelimiting starts this can take over
-                    minZoom={2}
-                    noWrap
-                />
-            );
-
-        case "dark":
-            return (
-                <TileLayer
-                    attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors; &copy; <a href="https://carto.com/attributions">CARTO</a>; Powered by Esri and Turf.js'
-                    url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-                    subdomains="abcd"
-                    maxZoom={20} // This technically should be 6, but once the ratelimiting starts this can take over
-                    minZoom={2}
-                    noWrap
-                />
-            );
-
-        case "transport":
-            if (thunderforestApiKey)
-                return (
-                    <TileLayer
-                        url={`https://tile.thunderforest.com/transport/{z}/{x}/{y}.png?apikey=${thunderforestApiKey}`}
-                        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors; &copy; <a href="http://www.thunderforest.com/">Thunderforest</a>; Powered by Esri and Turf.js'
-                        maxZoom={22}
-                        minZoom={2}
-                        noWrap
-                    />
-                );
-            break;
-
-        case "neighbourhood":
-            if (thunderforestApiKey)
-                return (
-                    <TileLayer
-                        url={`https://tile.thunderforest.com/neighbourhood/{z}/{x}/{y}.png?apikey=${thunderforestApiKey}`}
-                        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors; &copy; <a href="http://www.thunderforest.com/">Thunderforest</a>; Powered by Esri and Turf.js'
-                        maxZoom={22}
-                        minZoom={2}
-                        noWrap
-                    />
-                );
-            break;
-
-        case "osmcarto":
-            return (
-                <TileLayer
-                    attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors; Powered by Esri and Turf.js'
-                    url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
-                    maxZoom={19}
-                    minZoom={2}
-                    noWrap
-                />
-            );
-    }
-
+    const style = resolveTileStyle(tileLayer, thunderforestApiKey);
     return (
-        <TileLayer
-            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors; &copy; <a href="https://carto.com/attributions">CARTO</a>; Powered by Esri and Turf.js'
-            url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
-            subdomains="abcd"
-            maxZoom={20} // This technically should be 6, but once the ratelimiting starts this can take over
-            minZoom={2}
-            noWrap
-        />
+        <>
+            <TileLayer
+                key={style.id}
+                attribution={style.attribution}
+                url={style.url(thunderforestApiKey)}
+                maxNativeZoom={style.maxNativeZoom}
+                maxZoom={20}
+                minZoom={2}
+                noWrap
+            />
+            {style.overlayUrl && (
+                <TileLayer
+                    key={`${style.id}-labels`}
+                    url={style.overlayUrl}
+                    maxNativeZoom={style.maxNativeZoom}
+                    maxZoom={20}
+                    minZoom={2}
+                    noWrap
+                />
+            )}
+        </>
     );
 };
 
+const MAP_ERROR =
+    "Couldn't update the map: the answers may contradict each other, or map data failed to load.";
+
+/**
+ * Drawing tools: the host can draw a custom play area; anyone can draw while
+ * editing a custom question's zone or points.
+ */
+function DrawTools() {
+    const session = useStore(gameSession);
+    const host = useStore(isHost);
+    const drawingKey = useStore(drawingQuestionKey);
+    if (session && !host && drawingKey === -1) return null;
+    return <PolygonDraw />;
+}
+
+/** Padding that keeps fitted areas clear of the top bar, sheet and side panel. */
+const fitPadding = (): L.FitBoundsOptions => {
+    const desktop = window.matchMedia("(min-width: 1024px)").matches;
+    return desktop
+        ? { paddingTopLeft: [424, 80], paddingBottomRight: [72, 24] }
+        : { paddingTopLeft: [16, 80], paddingBottomRight: [16, 168] };
+};
+
 export const Map = ({ className }: { className?: string }) => {
-    useStore(additionalMapGeoLocations);
+    const $additionalMapGeoLocations = useStore(additionalMapGeoLocations);
     const $mapGeoLocation = useStore(mapGeoLocation);
+    const $polyGeoJSON = useStore(polyGeoJSON);
     const $questions = useStore(questions);
     const $baseTileLayer = useStore(baseTileLayer);
     const $thunderforestApiKey = useStore(thunderforestApiKey);
     const $hiderMode = useStore(hiderMode);
+    const $session = useStore(gameSession);
+    const $syncReady = useStore(syncReady);
+    // In a game, wait until the host's area is applied before computing.
+    const canCompute = $session === null || $syncReady;
     useStore(isLoading);
     const $followMe = useStore(followMe);
     const $permanentOverlay = useStore(permanentOverlay);
@@ -147,7 +134,10 @@ export const Map = ({ className }: { className?: string }) => {
         let result;
         try {
             result = await computeMapAsync({
-                questions: $questions,
+                questions: questionsForMap(
+                    $questions,
+                    planningModeEnabled.get(),
+                ),
                 env: snapshotGeoEnv(),
                 planningModeEnabled: planningModeEnabled.get(),
             });
@@ -155,9 +145,7 @@ export const Map = ({ className }: { className?: string }) => {
             if (error instanceof ComputeCancelled) return; // a newer refresh owns the spinner
             console.log(error);
             isLoading.set(false);
-            if (document.querySelectorAll(".Toastify__toast").length === 0) {
-                toast.error("No solutions found / error occurred");
-            }
+            toast.error(MAP_ERROR, { toastId: "map-error" });
             return;
         }
 
@@ -207,16 +195,14 @@ export const Map = ({ className }: { className?: string }) => {
                 ];
 
                 if (animateMapMovements.get()) {
-                    map.flyToBounds(bounds as any);
+                    map.flyToBounds(bounds as any, fitPadding());
                 } else {
-                    map.fitBounds(bounds as any);
+                    map.fitBounds(bounds as any, fitPadding());
                 }
             }
         } catch (error) {
             console.log(error);
-            if (document.querySelectorAll(".Toastify__toast").length === 0) {
-                toast.error("No solutions found / error occurred");
-            }
+            toast.error(MAP_ERROR, { toastId: "map-error" });
         } finally {
             isLoading.set(false);
         }
@@ -227,7 +213,8 @@ export const Map = ({ className }: { className?: string }) => {
             <MapContainer
                 center={$mapGeoLocation.geometry.coordinates}
                 zoom={5}
-                className={cn("w-[500px] h-[500px]", className)}
+                zoomControl={false}
+                className={cn("h-full w-full", className)}
                 preferCanvas={true}
                 ref={leafletMapContext.set}
                 // @ts-expect-error Typing doesn't update from react-contextmenu
@@ -353,36 +340,51 @@ export const Map = ({ className }: { className?: string }) => {
             >
                 {getTileLayer($baseTileLayer, $thunderforestApiKey)}
                 <DraggableMarkers />
-                <div className="leaflet-top leaflet-right">
-                    <div className="leaflet-control flex-col flex gap-2">
-                        <LeafletFullScreenButton />
-                    </div>
-                </div>
-                <PolygonDraw />
+                <ZoomControl position="topright" />
+                <DrawTools />
                 <ScaleControl position="bottomleft" />
-                <MapPrint
-                    position="topright"
-                    sizeModes={["Current", "A4Portrait", "A4Landscape"]}
-                    hideControlContainer={false}
-                    hideClasses={[
-                        "leaflet-full-screen-specific-name",
-                        "leaflet-top",
-                        "leaflet-control-easyPrint",
-                        "leaflet-draw",
-                    ]}
-                    title="Print"
-                />
             </MapContainer>
         ),
         [map, $baseTileLayer, $thunderforestApiKey],
     );
 
-    // Step 2.1: Debounce refreshQuestions to batch rapid changes (e.g. marker dragging)
+    // Jump to a newly chosen play area right away (its search result carries a
+    // bounding box), instead of waiting for the full border to download.
+    const lastArea = useRef<string | null>(null);
     useEffect(() => {
-        if (!map) return;
+        if (!map || $polyGeoJSON) return;
+        const props = $mapGeoLocation?.properties;
+        const id = `${props?.osm_type}${props?.osm_id}`;
+        if (lastArea.current === id) return;
+        lastArea.current = id;
+        const e = props?.extent;
+        if (Array.isArray(e) && e.length === 4) {
+            map.fitBounds(
+                [
+                    [e[0], e[1]],
+                    [e[2], e[3]],
+                ],
+                fitPadding(),
+            );
+        } else if ($mapGeoLocation?.geometry?.coordinates) {
+            map.setView($mapGeoLocation.geometry.coordinates as any, 10);
+        }
+    }, [map, $mapGeoLocation, $polyGeoJSON]);
+
+    // Debounce to batch rapid changes (e.g. marker dragging).
+    useEffect(() => {
+        if (!map || !canCompute) return;
         const timeout = setTimeout(() => refreshQuestions(true), 150);
         return () => clearTimeout(timeout);
-    }, [$questions, map, $hiderMode]);
+    }, [
+        $questions,
+        map,
+        $hiderMode,
+        canCompute,
+        $mapGeoLocation,
+        $polyGeoJSON,
+        $additionalMapGeoLocations,
+    ]);
 
     useEffect(() => {
         const handleFullscreenChange = () => {

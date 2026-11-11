@@ -66,6 +66,12 @@ export const realtimeStatus = atom<RealtimeStatus>("connecting");
 /** Latest role-filtered state received from the server. */
 export const gameState = atom<GameState | null>(null);
 
+/**
+ * True once the local map stores hold the game's area/settings. The map waits
+ * for this so nobody computes (and downloads) a stale local area first.
+ */
+export const syncReady = atom<boolean>(false);
+
 /** All committed questions for the current game (sorted by order). */
 export const committedQuestions = atom<CommittedQuestion[]>([]);
 

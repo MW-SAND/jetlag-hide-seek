@@ -18,6 +18,8 @@ import type { FeatureCollection, MultiPolygon, Polygon } from "geojson";
 import type { Map } from "leaflet";
 import { atom, computed, onSet, type ReadableAtom } from "nanostores";
 
+import { type BaseTileLayer, DEFAULT_TILE_STYLE, TILE_STYLES } from "./tiles";
+
 /** Keep the geo engine's environment in sync with a persistent app store. */
 const mirror = <T>(
     source: ReadableAtom<T>,
@@ -332,9 +334,18 @@ export const autoZoom = persistentAtom<boolean>("autoZoom", true, {
 
 export const isLoading = atom<boolean>(false);
 
-export const baseTileLayer = persistentAtom<
-    "voyager" | "light" | "dark" | "transport" | "neighbourhood" | "osmcarto"
->("baseTileLayer", "voyager");
+export const baseTileLayer = persistentAtom<BaseTileLayer>(
+    "baseTileLayer",
+    DEFAULT_TILE_STYLE,
+    {
+        encode: (value) => value,
+        // CARTO styles ("voyager") need an API key now: fall back to Streets.
+        decode: (value) =>
+            TILE_STYLES.some((s) => s.id === value)
+                ? (value as BaseTileLayer)
+                : DEFAULT_TILE_STYLE,
+    },
+);
 export const thunderforestApiKey = persistentAtom<string>(
     "thunderforestApiKey",
     "",

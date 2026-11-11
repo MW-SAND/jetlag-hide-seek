@@ -28,14 +28,13 @@ import {
     displayHidingZones,
     drawingQuestionKey,
     hiderMode,
-    isLoading,
     questionModified,
     questions,
     triggerLocalRefresh,
 } from "@/lib/context";
 import { cn } from "@/lib/utils";
 
-import { QuestionCard } from "./base";
+import { QuestionCard, SoloOnly } from "./base";
 
 export const MatchingQuestionComponent = ({
     data,
@@ -53,7 +52,6 @@ export const MatchingQuestionComponent = ({
     const $questions = useStore(questions);
     const $displayHidingZones = useStore(displayHidingZones);
     const $drawingQuestionKey = useStore(drawingQuestionKey);
-    const $isLoading = useStore(isLoading);
     const $customInitPref = useStore(customInitPreference);
     const [customDialogOpen, setCustomDialogOpen] = React.useState(false);
     const [pendingCustomType, setPendingCustomType] = React.useState<
@@ -103,7 +101,7 @@ export const MatchingQuestionComponent = ({
                                         | 10),
                                 )
                             }
-                            disabled={!data.drag || $isLoading}
+                            disabled={!data.drag}
                         />
                     </SidebarMenuItem>
                     {data.type === "letter-zone" && (
@@ -163,7 +161,6 @@ export const MatchingQuestionComponent = ({
                                         drawingQuestionKey.set(-1);
                                     }
                                 }}
-                                disabled={$isLoading}
                             />
                             and use the buttons at the bottom left of the map.
                         </p>
@@ -362,7 +359,7 @@ export const MatchingQuestionComponent = ({
                         }
                         questionModified((data.type = value));
                     }}
-                    disabled={!data.drag || $isLoading}
+                    disabled={!data.drag}
                 />
             </SidebarMenuItem>
             {questionSpecific}
@@ -381,82 +378,90 @@ export const MatchingQuestionComponent = ({
                         }
                         questionModified();
                     }}
-                    disabled={!data.drag || $isLoading}
+                    disabled={!data.drag}
                 />
             )}
-            <div
-                className={cn(
-                    "flex gap-2 items-center p-2",
-                    data.type === "same-length-station" && "flex-col",
-                )}
-            >
-                <Label
+            <SoloOnly>
+                <div
                     className={cn(
-                        "font-semibold text-lg",
-                        $isLoading && "text-muted-foreground",
-                        data.type === "same-length-station" && "text-center",
+                        "flex gap-2 items-center p-2",
+                        data.type === "same-length-station" && "flex-col",
                     )}
                 >
-                    Result
-                </Label>
-                {data.type === "same-length-station" ? (
-                    <ToggleGroup
-                        className="grow"
-                        type="single"
-                        value={
-                            data.lengthComparison
-                                ? data.lengthComparison
-                                : data.same === true
-                                  ? "same"
-                                  : data.same === false
-                                    ? "different"
-                                    : "same"
-                        }
-                        onValueChange={(
-                            value: "shorter" | "same" | "longer" | "different",
-                        ) => {
-                            if (value === "shorter" || value === "longer") {
-                                questionModified(
-                                    (data.lengthComparison = value),
-                                );
-                            } else if (value === "same") {
-                                questionModified(
-                                    (data.lengthComparison = "same"),
-                                );
-                                questionModified((data.same = true));
-                            } else if (value === "different") {
-                                questionModified((data.same = false));
-                            }
-                        }}
-                        disabled={!!$hiderMode || !data.drag || $isLoading}
+                    <Label
+                        className={cn(
+                            "font-semibold text-lg",
+                            data.type === "same-length-station" &&
+                                "text-center",
+                        )}
                     >
-                        <ToggleGroupItem value="shorter">
-                            Shorter
-                        </ToggleGroupItem>
-                        <ToggleGroupItem value="same">Same</ToggleGroupItem>
-                        <ToggleGroupItem value="longer">Longer</ToggleGroupItem>
-                    </ToggleGroup>
-                ) : (
-                    <ToggleGroup
-                        className="grow"
-                        type="single"
-                        value={data.same ? "same" : "different"}
-                        onValueChange={(value) => {
-                            if (value === "same") {
-                                questionModified((data.same = true));
-                            } else if (value === "different") {
-                                questionModified((data.same = false));
+                        Result
+                    </Label>
+                    {data.type === "same-length-station" ? (
+                        <ToggleGroup
+                            className="grow"
+                            type="single"
+                            value={
+                                data.lengthComparison
+                                    ? data.lengthComparison
+                                    : data.same === true
+                                      ? "same"
+                                      : data.same === false
+                                        ? "different"
+                                        : "same"
                             }
-                        }}
-                        disabled={!!$hiderMode || !data.drag || $isLoading}
-                    >
-                        <ToggleGroupItem value="different">
-                            Different
-                        </ToggleGroupItem>
-                        <ToggleGroupItem value="same">Same</ToggleGroupItem>
-                    </ToggleGroup>
-                )}
-            </div>
+                            onValueChange={(
+                                value:
+                                    | "shorter"
+                                    | "same"
+                                    | "longer"
+                                    | "different",
+                            ) => {
+                                if (value === "shorter" || value === "longer") {
+                                    questionModified(
+                                        (data.lengthComparison = value),
+                                    );
+                                } else if (value === "same") {
+                                    questionModified(
+                                        (data.lengthComparison = "same"),
+                                    );
+                                    questionModified((data.same = true));
+                                } else if (value === "different") {
+                                    questionModified((data.same = false));
+                                }
+                            }}
+                            disabled={!!$hiderMode || !data.drag}
+                        >
+                            <ToggleGroupItem value="shorter">
+                                Shorter
+                            </ToggleGroupItem>
+                            <ToggleGroupItem value="same">Same</ToggleGroupItem>
+                            <ToggleGroupItem value="longer">
+                                Longer
+                            </ToggleGroupItem>
+                        </ToggleGroup>
+                    ) : (
+                        <ToggleGroup
+                            className="grow"
+                            type="single"
+                            value={data.same ? "same" : "different"}
+                            onValueChange={(value) => {
+                                if (value === "same") {
+                                    questionModified((data.same = true));
+                                } else if (value === "different") {
+                                    questionModified((data.same = false));
+                                }
+                            }}
+                            disabled={!!$hiderMode || !data.drag}
+                        >
+                            <ToggleGroupItem value="different">
+                                Different
+                            </ToggleGroupItem>
+                            <ToggleGroupItem value="same">Same</ToggleGroupItem>
+                        </ToggleGroup>
+                    )}
+                </div>
+            </SoloOnly>
         </QuestionCard>
     );
 };

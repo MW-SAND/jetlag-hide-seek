@@ -1,8 +1,11 @@
 import type { APILocations } from "../schema";
 
-export const OVERPASS_API = "https://overpass-api.de/api/interpreter";
-export const OVERPASS_API_FALLBACK =
-    "https://overpass.private.coffee/api/interpreter";
+/** Same-origin caching proxy (apps/server/src/overpass.ts). */
+export const OVERPASS_API = "/api/overpass";
+/** Last resort if our own server can't reach any Overpass mirror. */
+export const OVERPASS_API_FALLBACK = "https://overpass-api.de/api/interpreter";
+/** Longer GET URLs risk being rejected by reverse proxies; POST those. */
+export const OVERPASS_MAX_GET_URL = 6000;
 export const GEOCODER_API = "https://photon.komoot.io/api/";
 
 export const ICON_COLORS = {

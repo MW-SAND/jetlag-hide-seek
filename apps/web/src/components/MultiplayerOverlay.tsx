@@ -1,18 +1,14 @@
 /**
- * Mounts all multiplayer overlay components inside a single error boundary.
- * Used in index.astro so that one `client:only` hydration point covers:
- *   - AppRoot (view router)
- *   - GameUIVisibility (show/hide map UI)
+ * Mounts the multiplayer overlay screens (landing, lobby, results) inside a
+ * single error boundary.
  */
 import { AppRoot } from "./AppRoot";
-import { GameUIVisibility } from "./GameUIVisibility";
 import { MultiplayerErrorBoundary } from "./MultiplayerErrorBoundary";
 
 export function MultiplayerOverlay() {
     return (
         <MultiplayerErrorBoundary>
             <AppRoot />
-            <GameUIVisibility />
         </MultiplayerErrorBoundary>
     );
 }

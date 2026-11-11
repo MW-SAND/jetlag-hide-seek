@@ -9,6 +9,7 @@ export const RATE_RULES = {
     joinGame: { limit: 60, windowMs: 10 * 60 * 1000 },
     share: { limit: 30, windowMs: 10 * 60 * 1000 },
     mutation: { limit: 600, windowMs: 60 * 1000 },
+    overpass: { limit: 300, windowMs: 60 * 1000 },
 } satisfies Record<string, RateRule>;
 
 export type RateBucket = keyof typeof RATE_RULES;

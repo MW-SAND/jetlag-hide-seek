@@ -25,6 +25,7 @@ import { type Config, DATA_MARKER } from "./config.ts";
 import { closeDatabase, openDatabase } from "./db.ts";
 import { AppError, fail } from "./errors.ts";
 import { createLogger, type Logger } from "./log.ts";
+import { createOverpassProxy } from "./overpass.ts";
 import { createRateLimiter, type RateBucket } from "./ratelimit.ts";
 import { createService } from "./service.ts";
 import { createSseHub } from "./sse.ts";
@@ -45,6 +46,8 @@ export interface AppOptions {
     config: Config;
     now?: () => number;
     logger?: Logger;
+    /** Injected in tests to fake the Overpass servers. */
+    overpassFetch?: typeof fetch;
 }
 
 interface Ctx {
@@ -115,7 +118,12 @@ function readBody(req: IncomingMessage, limit: number): Promise<Buffer> {
     });
 }
 
-export function createApp({ config, now = Date.now, logger }: AppOptions) {
+export function createApp({
+    config,
+    now = Date.now,
+    logger,
+    overpassFetch,
+}: AppOptions) {
     const log = logger ?? createLogger(config.logLevel);
 
     if (
@@ -143,6 +151,15 @@ export function createApp({ config, now = Date.now, logger }: AppOptions) {
     const serveStatic = config.staticDir
         ? createStaticHandler(config.staticDir)
         : null;
+    const overpass = createOverpassProxy({
+        cacheDir: path.join(config.dataDir, "cache", "overpass"),
+        upstreams: config.overpassUpstreams,
+        ttlMs: config.overpassCacheTtlMs,
+        maxBytes: config.overpassCacheBytes,
+        fetchImpl: overpassFetch,
+        log,
+        now,
+    });
 
     const clientId = (ctx: Ctx) => service.findClient(ctx.tokenHash);
     const ensureClientId = (ctx: Ctx) => service.ensureClient(ctx.tokenHash);
@@ -395,6 +412,29 @@ export function createApp({ config, now = Date.now, logger }: AppOptions) {
         );
     }
 
+    async function handleOverpass(
+        req: IncomingMessage,
+        res: ServerResponse,
+        url: URL,
+    ) {
+        const method = req.method ?? "GET";
+        if (!limiter.hit("overpass", clientIp(req)))
+            fail("rate_limited", "Too many map data requests");
+        let query: string | null = null;
+        if (method === "GET" || method === "HEAD") {
+            query = url.searchParams.get("data");
+        } else if (method === "POST") {
+            // Long queries (e.g. polygons) are POSTed to stay under proxy URL limits.
+            if (req.headers[CSRF_HEADER] !== CSRF_VALUE)
+                fail("forbidden", "Missing X-Requested-With header");
+            const raw = (await readBody(req, 512 * 1024)).toString("utf8");
+            query = new URLSearchParams(raw).get("data");
+        } else {
+            fail("invalid", "Method not allowed");
+        }
+        await overpass.handle(req, res, query ?? "");
+    }
+
     async function handle(req: IncomingMessage, res: ServerResponse) {
         for (const [k, v] of Object.entries(SECURITY_HEADERS))
             res.setHeader(k, v);
@@ -414,6 +454,9 @@ export function createApp({ config, now = Date.now, logger }: AppOptions) {
                         version: config.version,
                     });
                 }
+            }
+            if (pathname === "/api/overpass") {
+                return await handleOverpass(req, res, url);
             }
             if (pathname.startsWith("/api/")) {
                 if (shuttingDown) {
@@ -494,7 +537,7 @@ export function createApp({ config, now = Date.now, logger }: AppOptions) {
         return closed;
     }
 
-    return { server, close, service, hub, db, limiter, runCleanup };
+    return { server, close, service, hub, db, limiter, runCleanup, overpass };
 }
 
 const STREAMING = Symbol("streaming");

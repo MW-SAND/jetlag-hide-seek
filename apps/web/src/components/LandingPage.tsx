@@ -1,8 +1,9 @@
-import type { PlayerRole } from "@jetlag/shared";
+import { DISPLAY_NAME_MAX, type PlayerRole } from "@jetlag/shared";
 import { useStore } from "@nanostores/react";
-import { Globe, MapPin, Plus, Users } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+import { Logo } from "@/components/brand/Logo";
+import { RolePicker, SubmitIcon } from "@/components/RolePicker";
 import { Button } from "@/components/ui/button";
 import { RawInput } from "@/components/ui/input";
 import {
@@ -12,264 +13,221 @@ import {
     multiplayerLoading,
     rejoinGame,
 } from "@/lib/multiplayer";
+import {
+    forgetRoom,
+    isKnownRoom,
+    loadRememberedName,
+    rememberName,
+} from "@/lib/preferences";
+import { cn } from "@/lib/utils";
 
-type Mode = null | "create" | "join";
+type Mode = "create" | "join";
+
+/** Accepts a typed/pasted code ("abc-123") or a whole invite link. */
+const formatRoomCode = (value: string) =>
+    (value.match(/#game\/([A-Za-z0-9]{6})/)?.[1] ?? value)
+        .toUpperCase()
+        .replace(/[^A-Z0-9]/g, "")
+        .slice(0, 6);
 
 export function LandingPage({ initialRoomCode }: { initialRoomCode?: string }) {
     const error = useStore(multiplayerError);
     const loading = useStore(multiplayerLoading);
 
-    const [mode, setMode] = useState<Mode>(initialRoomCode ? "join" : null);
+    const [mode, setMode] = useState<Mode>(initialRoomCode ? "join" : "create");
     const [displayName, setDisplayName] = useState("");
     const [roomCode, setRoomCode] = useState(initialRoomCode ?? "");
     const [role, setRole] = useState<PlayerRole>("seeker");
+    const [reconnecting, setReconnecting] = useState(false);
+    const nameRef = useRef<HTMLInputElement>(null);
+    const codeRef = useRef<HTMLInputElement>(null);
 
-    const nameInputRef = useRef<HTMLInputElement>(null);
-
+    // Coming back to a game this browser is already in (e.g. after a refresh):
+    // reconnect straight away instead of showing the form.
     useEffect(() => {
-        if (mode && nameInputRef.current) {
-            nameInputRef.current.focus();
-        }
-    }, [mode]);
+        if (!initialRoomCode || !isKnownRoom(initialRoomCode)) return;
+        setReconnecting(true);
+        void rejoinGame(initialRoomCode).then((ok) => {
+            if (ok) return;
+            forgetRoom(initialRoomCode);
+            setReconnecting(false);
+        });
+    }, [initialRoomCode]);
+
+    // Restore the last used name after hydration (the HTML is prerendered).
+    useEffect(() => {
+        const remembered = loadRememberedName();
+        if (remembered) setDisplayName(remembered);
+    }, []);
+
+    const canSubmit =
+        displayName.trim().length > 0 &&
+        (mode === "create" || roomCode.length === 6);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!displayName.trim()) return;
-
-        if (mode === "create") {
-            await createGame(displayName.trim(), role);
-        } else if (mode === "join") {
-            if (!roomCode.trim()) return;
-
-            // First try to rejoin an existing player session for this browser.
-            // If no matching player exists, fall back to a normal join.
-            const rejoined = await rejoinGame(roomCode.trim());
-            if (rejoined) return;
-
-            await joinGame(roomCode.trim(), displayName.trim(), role);
+        if (!canSubmit) {
+            (displayName.trim() ? codeRef : nameRef).current?.focus();
+            multiplayerError.set(
+                displayName.trim()
+                    ? "Enter the 6-character room code."
+                    : "Enter your name first.",
+            );
+            return;
         }
-    };
-
-    const formatRoomCode = (value: string) => {
-        return value
-            .toUpperCase()
-            .replace(/[^A-Z0-9]/g, "")
-            .slice(0, 6);
+        const name = displayName.trim();
+        rememberName(name);
+        if (mode === "create") {
+            await createGame(name, role);
+            return;
+        }
+        // A returning player (same browser) goes straight back in.
+        if (isKnownRoom(roomCode) && (await rejoinGame(roomCode))) return;
+        await joinGame(roomCode, name, role);
     };
 
     return (
-        <div className="fixed inset-0 z-[9999] bg-jetlag flex flex-col items-center justify-center p-4 overflow-hidden overflow-y-auto">
-            {/* Background decoration */}
-            <div className="absolute inset-0 overflow-hidden pointer-events-none">
-                <div className="absolute top-1/4 -left-20 w-96 h-96 bg-blue-500/5 rounded-full blur-3xl" />
-                <div className="absolute bottom-1/4 -right-20 w-80 h-80 bg-cyan-500/5 rounded-full blur-3xl" />
-                {/* Grid lines */}
+        <div className="fixed inset-0 z-[1400] overflow-y-auto bg-background">
+            {reconnecting && (
                 <div
-                    className="absolute inset-0 opacity-[0.03]"
-                    style={{
-                        backgroundImage: `
-                            linear-gradient(rgba(255,255,255,0.3) 1px, transparent 1px),
-                            linear-gradient(90deg, rgba(255,255,255,0.3) 1px, transparent 1px)
-                        `,
-                        backgroundSize: "60px 60px",
-                    }}
-                />
-            </div>
-
-            <div className="relative z-10 w-full max-w-md">
-                {/* Logo / Title */}
-                <div className="text-center mb-10">
-                    <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-white/10 backdrop-blur-sm mb-5 border border-white/10">
-                        <Globe className="w-8 h-8 text-blue-400" />
-                    </div>
-                    <h1 className="text-3xl font-bold text-white font-[Poppins] tracking-tight">
-                        Jet Lag
-                    </h1>
-                    <p className="text-slate-400 mt-1 text-sm tracking-wide uppercase">
-                        Hide &amp; Seek Map Generator
+                    className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-background"
+                    role="status"
+                    data-testid="reconnecting"
+                >
+                    <Logo />
+                    <p className="text-sm text-slate-300">
+                        Reconnecting to room{" "}
+                        <span className="font-mono tracking-wider text-white">
+                            {initialRoomCode}
+                        </span>
+                        …
                     </p>
                 </div>
-
-                {/* Mode selection */}
-                {mode === null && (
-                    <div className="space-y-3 animate-in fade-in duration-300">
-                        <button
-                            onClick={() => setMode("create")}
-                            className="w-full group relative overflow-hidden rounded-xl border border-white/10 bg-white/5 backdrop-blur-sm p-5 text-left transition-all hover:bg-white/10 hover:border-white/20"
-                        >
-                            <div className="flex items-center gap-4">
-                                <div className="flex-shrink-0 w-11 h-11 rounded-lg bg-blue-500/20 flex items-center justify-center">
-                                    <Plus className="w-5 h-5 text-blue-400" />
-                                </div>
-                                <div>
-                                    <div className="font-semibold text-white text-base">
-                                        Create Game
-                                    </div>
-                                    <div className="text-slate-400 text-sm mt-0.5">
-                                        Start a new session &amp; share the code
-                                    </div>
-                                </div>
-                            </div>
-                        </button>
-
-                        <button
-                            onClick={() => setMode("join")}
-                            className="w-full group relative overflow-hidden rounded-xl border border-white/10 bg-white/5 backdrop-blur-sm p-5 text-left transition-all hover:bg-white/10 hover:border-white/20"
-                        >
-                            <div className="flex items-center gap-4">
-                                <div className="flex-shrink-0 w-11 h-11 rounded-lg bg-emerald-500/20 flex items-center justify-center">
-                                    <Users className="w-5 h-5 text-emerald-400" />
-                                </div>
-                                <div>
-                                    <div className="font-semibold text-white text-base">
-                                        Join Game
-                                    </div>
-                                    <div className="text-slate-400 text-sm mt-0.5">
-                                        Enter a room code to join
-                                    </div>
-                                </div>
-                            </div>
-                        </button>
+            )}
+            <div
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-0 bg-[radial-gradient(60rem_40rem_at_10%_-10%,rgba(59,130,246,0.18),transparent),radial-gradient(50rem_35rem_at_110%_110%,rgba(16,185,129,0.14),transparent)]"
+            />
+            <main className="safe-top safe-bottom relative mx-auto flex min-h-full w-full max-w-md flex-col justify-center px-5 py-10">
+                <header className="mb-8 flex items-center gap-3">
+                    <Logo />
+                    <div>
+                        <h1 className="text-2xl font-bold leading-tight tracking-tight text-white">
+                            Hide &amp; Seek
+                        </h1>
+                        <p className="text-sm text-slate-400">
+                            The map companion for Jet Lag: The Game
+                        </p>
                     </div>
-                )}
+                </header>
 
-                {/* Create / Join form */}
-                {mode !== null && (
-                    <form
-                        onSubmit={handleSubmit}
-                        className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300"
+                <form
+                    onSubmit={handleSubmit}
+                    className="space-y-5 rounded-3xl border border-white/10 bg-slate-900/70 p-5 shadow-2xl shadow-black/40 backdrop-blur-xl"
+                    noValidate
+                >
+                    <div
+                        role="tablist"
+                        aria-label="Start or join"
+                        className="grid grid-cols-2 rounded-xl bg-white/5 p-1"
                     >
-                        <div className="rounded-xl border border-white/10 bg-white/5 backdrop-blur-sm p-5 space-y-4">
-                            <h2 className="font-semibold text-white text-lg flex items-center gap-2">
-                                {mode === "create" ? (
-                                    <>
-                                        <Plus className="w-4 h-4 text-blue-400" />
-                                        Create Game
-                                    </>
-                                ) : (
-                                    <>
-                                        <Users className="w-4 h-4 text-emerald-400" />
-                                        Join Game
-                                    </>
-                                )}
-                            </h2>
-
-                            {/* Room code (join only) */}
-                            {mode === "join" && (
-                                <div>
-                                    <label className="text-sm text-slate-400 mb-1.5 block">
-                                        Room Code
-                                    </label>
-                                    <RawInput
-                                        value={roomCode}
-                                        onChange={(e) =>
-                                            setRoomCode(
-                                                formatRoomCode(e.target.value),
-                                            )
-                                        }
-                                        placeholder="ABC123"
-                                        maxLength={6}
-                                        className="bg-white/5 border-white/10 text-white placeholder:text-slate-500 text-center text-2xl tracking-[0.3em] font-mono h-14 uppercase"
-                                        autoFocus={!!initialRoomCode}
-                                    />
-                                </div>
-                            )}
-
-                            {/* Display name */}
-                            <div>
-                                <label className="text-sm text-slate-400 mb-1.5 block">
-                                    Your Name
-                                </label>
-                                <RawInput
-                                    ref={nameInputRef}
-                                    value={displayName}
-                                    onChange={(e) =>
-                                        setDisplayName(
-                                            e.target.value.slice(0, 20),
-                                        )
-                                    }
-                                    placeholder="Enter your name"
-                                    maxLength={20}
-                                    className="bg-white/5 border-white/10 text-white placeholder:text-slate-500"
-                                />
-                            </div>
-
-                            {/* Role selection (create + join) */}
-                            {mode !== null && (
-                                <div>
-                                    <label className="text-sm text-slate-400 mb-1.5 block">
-                                        Your Role
-                                    </label>
-                                    <div className="grid grid-cols-2 gap-2">
-                                        <button
-                                            type="button"
-                                            onClick={() => setRole("seeker")}
-                                            className={`rounded-lg border p-3 text-sm font-medium transition-all ${
-                                                role === "seeker"
-                                                    ? "border-blue-500 bg-blue-500/20 text-blue-300"
-                                                    : "border-white/10 bg-white/5 text-slate-400 hover:border-white/20"
-                                            }`}
-                                        >
-                                            <MapPin className="w-4 h-4 mx-auto mb-1" />
-                                            Seeker
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={() => setRole("hider")}
-                                            className={`rounded-lg border p-3 text-sm font-medium transition-all ${
-                                                role === "hider"
-                                                    ? "border-emerald-500 bg-emerald-500/20 text-emerald-300"
-                                                    : "border-white/10 bg-white/5 text-slate-400 hover:border-white/20"
-                                            }`}
-                                        >
-                                            <Globe className="w-4 h-4 mx-auto mb-1" />
-                                            Hider
-                                        </button>
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-
-                        {/* Error */}
-                        {error && (
-                            <div className="rounded-lg bg-red-500/10 border border-red-500/20 p-3 text-red-300 text-sm">
-                                {error}
-                            </div>
-                        )}
-
-                        {/* Actions */}
-                        <div className="flex gap-2">
-                            <Button
+                        {(["create", "join"] as const).map((m) => (
+                            <button
+                                key={m}
                                 type="button"
-                                variant="ghost"
+                                role="tab"
+                                aria-selected={mode === m}
+                                data-testid={`tab-${m}`}
                                 onClick={() => {
-                                    setMode(null);
+                                    setMode(m);
                                     multiplayerError.set(null);
                                 }}
-                                className="text-slate-400 hover:text-white"
-                                disabled={loading}
+                                className={cn(
+                                    "h-10 rounded-lg text-sm font-semibold transition-colors",
+                                    mode === m
+                                        ? "bg-white text-slate-900 shadow"
+                                        : "text-slate-400 hover:text-white",
+                                )}
                             >
-                                Back
-                            </Button>
-                            <Button
-                                type="submit"
-                                disabled={
-                                    loading ||
-                                    !displayName.trim() ||
-                                    (mode === "join" && roomCode.length !== 6)
+                                {m === "create" ? "New game" : "Join game"}
+                            </button>
+                        ))}
+                    </div>
+
+                    {mode === "join" && (
+                        <label className="block">
+                            <span className="mb-1.5 block text-sm font-medium text-slate-300">
+                                Room code
+                            </span>
+                            <RawInput
+                                ref={codeRef}
+                                value={roomCode}
+                                onChange={(e) =>
+                                    setRoomCode(formatRoomCode(e.target.value))
                                 }
-                                className="flex-1 bg-blue-600 hover:bg-blue-500 text-white"
-                            >
-                                {loading
-                                    ? "Connecting..."
-                                    : mode === "create"
-                                      ? "Create Game"
-                                      : "Join Game"}
-                            </Button>
-                        </div>
-                    </form>
-                )}
-            </div>
+                                placeholder="ABC123"
+                                inputMode="text"
+                                autoCapitalize="characters"
+                                autoComplete="off"
+                                spellCheck={false}
+                                aria-label="Room code"
+                                className="h-14 text-center font-mono text-2xl uppercase tracking-[0.35em]"
+                            />
+                        </label>
+                    )}
+
+                    <label className="block">
+                        <span className="mb-1.5 block text-sm font-medium text-slate-300">
+                            Your name
+                        </span>
+                        <RawInput
+                            ref={nameRef}
+                            value={displayName}
+                            onChange={(e) =>
+                                setDisplayName(
+                                    e.target.value.slice(0, DISPLAY_NAME_MAX),
+                                )
+                            }
+                            placeholder="Enter your name"
+                            autoComplete="nickname"
+                            maxLength={DISPLAY_NAME_MAX}
+                            aria-label="Your name"
+                        />
+                    </label>
+
+                    <div>
+                        <span className="mb-1.5 block text-sm font-medium text-slate-300">
+                            I&apos;m a
+                        </span>
+                        <RolePicker value={role} onChange={setRole} />
+                    </div>
+
+                    {error && (
+                        <p
+                            role="alert"
+                            className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2.5 text-sm text-red-200"
+                        >
+                            {error}
+                        </p>
+                    )}
+
+                    <Button
+                        type="submit"
+                        size="lg"
+                        className="w-full"
+                        disabled={loading}
+                        data-testid="landing-submit"
+                    >
+                        <SubmitIcon loading={loading} mode={mode} />
+                        {mode === "create" ? "Create game" : "Join game"}
+                    </Button>
+                </form>
+
+                <p className="mt-6 text-center text-xs text-slate-500">
+                    Create a game, share the code, and everyone plays on their
+                    own phone.
+                </p>
+            </main>
         </div>
     );
 }

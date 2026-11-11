@@ -8,14 +8,13 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { defaultUnit } from "@/lib/context";
 import {
     hiderMode,
-    isLoading,
     questionModified,
     questions,
     triggerLocalRefresh,
 } from "@/lib/context";
 import { cn } from "@/lib/utils";
 
-import { QuestionCard } from "./base";
+import { QuestionCard, SoloOnly } from "./base";
 
 export const ThermometerQuestionComponent = ({
     data,
@@ -31,7 +30,6 @@ export const ThermometerQuestionComponent = ({
     useStore(triggerLocalRefresh);
     const $hiderMode = useStore(hiderMode);
     const $questions = useStore(questions);
-    const $isLoading = useStore(isLoading);
 
     const $defaultUnit = useStore(defaultUnit);
     const DISTANCE_UNIT = $defaultUnit ?? "miles";
@@ -88,7 +86,7 @@ export const ThermometerQuestionComponent = ({
                     if (lng !== null) data.lngA = lng;
                     questionModified();
                 }}
-                disabled={!data.drag || $isLoading}
+                disabled={!data.drag}
             />
 
             <LatitudeLongitude
@@ -101,7 +99,7 @@ export const ThermometerQuestionComponent = ({
                     if (lng !== null) data.lngB = lng;
                     questionModified();
                 }}
-                disabled={!data.drag || $isLoading}
+                disabled={!data.drag}
             />
 
             {distanceValue !== null && (
@@ -113,30 +111,27 @@ export const ThermometerQuestionComponent = ({
                 </div>
             )}
 
-            <div className="flex gap-2 items-center p-2">
-                <Label
-                    className={cn(
-                        "font-semibold text-lg",
-                        $isLoading && "text-muted-foreground",
-                    )}
-                >
-                    Result
-                </Label>
-                <ToggleGroup
-                    className="grow"
-                    type="single"
-                    value={data.warmer ? "warmer" : "colder"}
-                    onValueChange={(value: "warmer" | "colder") =>
-                        questionModified((data.warmer = value === "warmer"))
-                    }
-                    disabled={!!$hiderMode || !data.drag || $isLoading}
-                >
-                    <ToggleGroupItem color="red" value="colder">
-                        Colder
-                    </ToggleGroupItem>
-                    <ToggleGroupItem value="warmer">Warmer</ToggleGroupItem>
-                </ToggleGroup>
-            </div>
+            <SoloOnly>
+                <div className="flex gap-2 items-center p-2">
+                    <Label className={cn("font-semibold text-lg")}>
+                        Result
+                    </Label>
+                    <ToggleGroup
+                        className="grow"
+                        type="single"
+                        value={data.warmer ? "warmer" : "colder"}
+                        onValueChange={(value: "warmer" | "colder") =>
+                            questionModified((data.warmer = value === "warmer"))
+                        }
+                        disabled={!!$hiderMode || !data.drag}
+                    >
+                        <ToggleGroupItem color="red" value="colder">
+                            Colder
+                        </ToggleGroupItem>
+                        <ToggleGroupItem value="warmer">Warmer</ToggleGroupItem>
+                    </ToggleGroup>
+                </div>
+            </SoloOnly>
         </QuestionCard>
     );
 };

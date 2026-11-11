@@ -1,14 +1,24 @@
 /**
- * Hider answer UI — shows unanswered questions with answer controls.
+ * Hider answer UI — questions waiting for an answer plus the undo window.
  * Only rendered for players with role === "hider".
  */
 import { findTentacleLocations } from "@jetlag/geo/api";
 import { useStore } from "@nanostores/react";
 import * as turf from "@turf/turf";
-import { Ban, Check, Clock, Loader2, Send, Undo2, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import {
+    Ban,
+    Clock,
+    Inbox,
+    Loader2,
+    Send,
+    Sparkles,
+    Undo2,
+} from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 
+import { QuestionKindIcon } from "@/components/game/QuestionKindIcon";
 import { Button } from "@/components/ui/button";
+import { RawInput } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import {
     answerDraftSelections,
@@ -25,322 +35,268 @@ import {
     undoAnswer,
     vetoQuestion,
 } from "@/lib/question-store";
-import { mapToObj } from "@/lib/utils";
+import { cn, mapToObj } from "@/lib/utils";
 
 export function HiderAnswerPanel() {
     const unanswered = useStore(unansweredQuestions);
     const allQuestions = useStore(committedQuestions);
+    const [, setTick] = useState(0);
 
-    // Recently answered questions (for undo window)
-    const recentlyAnswered = allQuestions.filter((q) => {
-        if (!q.answer) return false;
-        const deadline = new Date(q.answer.undoDeadline).getTime();
-        return deadline > Date.now();
-    });
+    const recentlyAnswered = allQuestions.filter(
+        (q) =>
+            q.answer && new Date(q.answer.undoDeadline).getTime() > Date.now(),
+    );
+
+    // Re-render once the last undo window closes so the card disappears.
+    useEffect(() => {
+        if (recentlyAnswered.length === 0) return;
+        const interval = setInterval(() => setTick((t) => t + 1), 1000);
+        return () => clearInterval(interval);
+    }, [recentlyAnswered.length]);
 
     return (
-        <div className="space-y-3">
-            {/* Unanswered questions */}
+        <div className="space-y-4" data-testid="hider-answers">
             {unanswered.length > 0 && (
-                <div>
-                    <h3 className="text-xs uppercase tracking-wider text-slate-400 mb-2 px-1">
-                        Awaiting Your Answer ({unanswered.length})
+                <section className="space-y-2.5">
+                    <h3 className="px-1 text-xs font-semibold uppercase tracking-wider text-slate-400">
+                        Waiting for your answer · {unanswered.length}
                     </h3>
-                    {unanswered.map((q) => (
-                        <UnansweredCard key={q.dbId} question={q} />
-                    ))}
-                </div>
+                    {unanswered.map((q) =>
+                        q.questionType === "tentacles" ? (
+                            <TentacleCard key={q.dbId} question={q} />
+                        ) : (
+                            <StandardCard key={q.dbId} question={q} />
+                        ),
+                    )}
+                </section>
             )}
 
-            {/* Undo window */}
             {recentlyAnswered.length > 0 && (
-                <div>
-                    <h3 className="text-xs uppercase tracking-wider text-amber-400/70 mb-2 px-1">
-                        Recently Answered (undo available)
+                <section className="space-y-2.5">
+                    <h3 className="px-1 text-xs font-semibold uppercase tracking-wider text-amber-300/80">
+                        Just answered
                     </h3>
                     {recentlyAnswered.map((q) => (
-                        <UndoableCard key={q.dbId} question={q} />
+                        <UndoCard key={q.dbId} question={q} />
                     ))}
-                </div>
+                </section>
             )}
 
             {unanswered.length === 0 && recentlyAnswered.length === 0 && (
-                <div className="text-center text-slate-500 text-sm py-4">
-                    No questions to answer yet
+                <div
+                    className="flex flex-col items-center gap-2 px-6 py-8 text-center"
+                    data-testid="no-questions"
+                >
+                    <Inbox className="h-8 w-8 text-slate-600" />
+                    <p className="text-sm font-medium text-slate-300">
+                        No questions yet
+                    </p>
+                    <p className="text-xs text-slate-500">
+                        When the seekers ask something, it shows up here and
+                        your phone buzzes.
+                    </p>
                 </div>
             )}
         </div>
     );
 }
 
-function UnansweredCard({ question }: { question: CommittedQuestion }) {
-    if (question.questionType === "tentacles") {
-        return <TentacleUnansweredCard question={question} />;
-    }
-    return <StandardUnansweredCard question={question} />;
+function CardShell({
+    question,
+    children,
+}: {
+    question: CommittedQuestion;
+    children: React.ReactNode;
+}) {
+    const sentAt = new Date(question.createdAt).toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+    });
+    return (
+        <article
+            className="rounded-2xl border border-white/10 bg-white/[0.04] p-3.5"
+            data-testid="answer-card"
+            data-question-type={question.questionType}
+            data-question-order={question.order}
+        >
+            <div className="mb-3 flex items-start gap-3">
+                <QuestionKindIcon kind={question.questionType as any} />
+                <div className="min-w-0 flex-1">
+                    <p className="text-[11px] uppercase tracking-wider text-slate-500">
+                        Q{question.order} · {question.questionType} · {sentAt}
+                    </p>
+                    <p
+                        className="text-[15px] font-medium leading-snug text-white"
+                        data-testid="answer-prompt"
+                    >
+                        {questionPrompt(question)}
+                    </p>
+                </div>
+            </div>
+            {children}
+        </article>
+    );
 }
 
-function StandardUnansweredCard({ question }: { question: CommittedQuestion }) {
-    const [answering, setAnswering] = useState(false);
+function StandardCard({ question }: { question: CommittedQuestion }) {
+    const [sending, setSending] = useState(false);
     const [selected, setSelected] = useState<boolean | null>(null);
     const [initializing, setInitializing] = useState(true);
+    const [suggested, setSuggested] = useState<boolean | null>(null);
     const drafts = useStore(answerDraftSelections);
-
-    const label = formatQuestionLabel(question);
+    const touched = useRef(false);
 
     useEffect(() => {
         let cancelled = false;
-
-        const initSelection = async () => {
-            const existingDraft = drafts[question.dbId];
-            if (existingDraft && typeof existingDraft.confirmed === "boolean") {
-                setSelected(existingDraft.confirmed);
-                setInitializing(false);
-                return;
-            }
-
+        (async () => {
+            let suggestion: boolean | null = null;
             try {
-                const suggested = await deriveSuggestedConfirmed(question);
-                if (cancelled) return;
-                setSelected(suggested);
-                setDraftAnswerSelection(question, { confirmed: suggested });
+                suggestion = await deriveSuggestedConfirmed(question);
             } catch {
-                if (cancelled) return;
-                // Safe fallback: keep original seeker proposition as default.
-                setSelected(true);
-                setDraftAnswerSelection(question, { confirmed: true });
-            } finally {
-                if (!cancelled) {
-                    setInitializing(false);
-                }
+                // The hider simply picks manually.
             }
-        };
-
-        initSelection();
-
+            if (cancelled) return;
+            setSuggested(suggestion);
+            setInitializing(false);
+            // Never override a choice the hider already made.
+            if (touched.current) return;
+            const existing = drafts[question.dbId];
+            const initial =
+                existing && typeof existing.confirmed === "boolean"
+                    ? existing.confirmed
+                    : suggestion;
+            setSelected(initial);
+            if (initial !== null)
+                setDraftAnswerSelection(question, { confirmed: initial });
+        })();
         return () => {
             cancelled = true;
         };
     }, [question.dbId]);
 
-    const setChoice = (confirmed: boolean) => {
+    const choose = (confirmed: boolean) => {
+        touched.current = true;
         setSelected(confirmed);
         setDraftAnswerSelection(question, { confirmed });
     };
 
-    const handleSend = async () => {
+    const send = async () => {
         if (selected === null) return;
-        setAnswering(true);
+        setSending(true);
         try {
             await answerQuestion(question.dbId, { confirmed: selected });
             clearDraftAnswerSelection(question.dbId);
-        } catch (err: any) {
+        } catch (err) {
             console.error("Failed to answer:", err);
         } finally {
-            setAnswering(false);
+            setSending(false);
         }
     };
 
-    const sentAt = new Date(question.createdAt).toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-    });
     const options = getAnswerOptions(question);
+    const canSend = !sending && selected !== null;
 
     return (
-        <div className="rounded-lg border border-white/10 bg-white/5 p-3 mb-2">
-            <div className="text-sm text-slate-300 mb-1">
-                <span className="text-slate-500 text-xs">
-                    Q{question.order}
-                </span>{" "}
-                {label}
-            </div>
-            <div className="text-xs text-slate-500 mb-2">Sent at {sentAt}</div>
-            <div className="flex gap-2 mb-2">
-                <Button
-                    size="sm"
-                    variant={
-                        selected === options.first.confirmed
-                            ? "default"
-                            : "outline"
-                    }
-                    onClick={() => setChoice(options.first.confirmed)}
-                    disabled={answering || initializing}
-                    className={`flex-1 gap-1 ${
-                        selected === options.first.confirmed
-                            ? "bg-emerald-600 hover:bg-emerald-500 text-white"
-                            : "text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/10"
-                    }`}
-                >
-                    <Check className="w-3.5 h-3.5" />
-                    {options.first.label}
-                </Button>
-                <Button
-                    size="sm"
-                    variant={
-                        selected === options.second.confirmed
-                            ? "default"
-                            : "outline"
-                    }
-                    onClick={() => setChoice(options.second.confirmed)}
-                    disabled={answering || initializing}
-                    className={`flex-1 gap-1 ${
-                        selected === options.second.confirmed
-                            ? "bg-red-600 hover:bg-red-500 text-white"
-                            : "text-red-300 border-red-500/40 hover:bg-red-500/10"
-                    }`}
-                >
-                    <X className="w-3.5 h-3.5" />
-                    {options.second.label}
-                </Button>
+        <CardShell question={question}>
+            <div
+                className="grid grid-cols-2 gap-2"
+                role="radiogroup"
+                aria-label="Your answer"
+            >
+                {[options.first, options.second].map((option) => {
+                    const active = selected === option.confirmed;
+                    return (
+                        <button
+                            key={option.label}
+                            type="button"
+                            role="radio"
+                            aria-checked={active}
+                            disabled={sending}
+                            onClick={() => choose(option.confirmed)}
+                            data-testid="answer-option"
+                            className={cn(
+                                "relative flex min-h-12 flex-col items-center justify-center rounded-xl border px-2 py-2 text-sm font-semibold transition-colors disabled:opacity-50",
+                                active
+                                    ? "border-emerald-400 bg-emerald-500/20 text-white"
+                                    : "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10",
+                            )}
+                        >
+                            {option.label}
+                            {suggested === option.confirmed && (
+                                <span className="mt-0.5 flex items-center gap-1 text-[10px] font-normal text-emerald-300/90">
+                                    <Sparkles className="h-3 w-3" />
+                                    from your spot
+                                </span>
+                            )}
+                        </button>
+                    );
+                })}
             </div>
             <Button
-                size="sm"
-                onClick={handleSend}
-                disabled={answering || initializing || selected === null}
-                className="w-full bg-blue-600 hover:bg-blue-500 text-white gap-1"
+                variant="hider"
+                className="mt-2.5 w-full"
+                onClick={send}
+                disabled={!canSend}
+                data-testid="send-answer"
             >
-                {answering || initializing ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                {sending || (initializing && selected === null) ? (
+                    <Loader2 className="animate-spin" />
                 ) : (
-                    <Send className="w-3.5 h-3.5" />
+                    <Send />
                 )}
-                Send answer
+                {initializing && selected === null
+                    ? "Checking your spot…"
+                    : "Send answer"}
             </Button>
-            <VetoButton
-                question={question}
-                disabled={answering || initializing}
-            />
-        </div>
+            <VetoControl question={question} disabled={sending} />
+        </CardShell>
     );
 }
 
-function UndoableCard({ question }: { question: CommittedQuestion }) {
-    const [undoing, setUndoing] = useState(false);
-    const [timeLeft, setTimeLeft] = useState(0);
-
-    useEffect(() => {
-        if (!question.answer) return;
-        const deadline = new Date(question.answer.undoDeadline).getTime();
-
-        const tick = () => {
-            const remaining = Math.max(0, deadline - Date.now());
-            setTimeLeft(remaining);
-            if (remaining <= 0) return;
-        };
-
-        tick();
-        const interval = setInterval(tick, 1000);
-        return () => clearInterval(interval);
-    }, [question.answer?.undoDeadline]);
-
-    if (!question.answer || timeLeft <= 0) return null;
-
-    const label = formatQuestionLabel(question);
-    const confirmed = question.answer.answerData.confirmed as boolean;
-    const seconds = Math.ceil(timeLeft / 1000);
-
-    const handleUndo = async () => {
-        if (!question.answer) return;
-        setUndoing(true);
-        try {
-            await undoAnswer(question.answer.dbId);
-        } catch (err: any) {
-            console.error("Failed to undo:", err);
-        } finally {
-            setUndoing(false);
-        }
-    };
-
-    return (
-        <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 mb-2">
-            <div className="flex items-center justify-between mb-1">
-                <span className="text-sm text-slate-300">
-                    <span className="text-slate-500 text-xs">
-                        Q{question.order}
-                    </span>{" "}
-                    {label}
-                </span>
-                <span
-                    className={`text-xs font-mono ${confirmed ? "text-emerald-400" : "text-red-400"}`}
-                >
-                    {confirmed ? "Yes" : "No"}
-                </span>
-            </div>
-            <div className="flex items-center gap-2">
-                <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={handleUndo}
-                    disabled={undoing}
-                    className="text-amber-400 hover:text-amber-300 gap-1"
-                >
-                    <Undo2 className="w-3.5 h-3.5" />
-                    Undo
-                </Button>
-                <span className="text-xs text-slate-500 flex items-center gap-1">
-                    <Clock className="w-3 h-3" />
-                    {seconds}s
-                </span>
-            </div>
-        </div>
-    );
-}
-
-function TentacleUnansweredCard({ question }: { question: CommittedQuestion }) {
-    const [answering, setAnswering] = useState(false);
+function TentacleCard({ question }: { question: CommittedQuestion }) {
+    const [sending, setSending] = useState(false);
     const [initializing, setInitializing] = useState(true);
     const [options, setOptions] = useState<any[]>([]);
     const [selectedName, setSelectedName] = useState<string>("false");
     const drafts = useStore(answerDraftSelections);
-
-    const sentAt = new Date(question.createdAt).toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-    });
-
-    const label = formatQuestionLabel(question);
+    const qData = question.questionData as any;
 
     useEffect(() => {
         let cancelled = false;
 
-        const loadOptions = async () => {
-            const qData = question.questionData as any;
+        const load = async () => {
             const allFeatures =
                 qData.locationType === "custom"
                     ? (qData.places ?? [])
                     : (await findTentacleLocations(qData)).features;
 
-            const filteredFeatures = (() => {
-                if (
-                    qData.lat === null ||
-                    qData.lng === null ||
-                    qData.radius === undefined ||
-                    qData.radius === null
-                ) {
-                    return allFeatures;
-                }
-
-                const center = turf.point([qData.lng, qData.lat]);
-                return allFeatures.filter((feature: any) => {
-                    const coords =
-                        feature?.geometry?.coordinates ??
-                        (feature?.properties?.lon && feature?.properties?.lat
-                            ? [feature.properties.lon, feature.properties.lat]
-                            : null);
-
-                    if (!coords) return false;
-
-                    const pt = turf.point(coords);
-                    const dist = turf.distance(center, pt, {
-                        units: qData.unit,
-                    });
-                    return dist <= qData.radius;
-                });
-            })();
+            const inRange =
+                qData.lat === null || qData.lng === null || qData.radius == null
+                    ? allFeatures
+                    : allFeatures.filter((feature: any) => {
+                          const coords =
+                              feature?.geometry?.coordinates ??
+                              (feature?.properties?.lon &&
+                              feature?.properties?.lat
+                                  ? [
+                                        feature.properties.lon,
+                                        feature.properties.lat,
+                                    ]
+                                  : null);
+                          if (!coords) return false;
+                          return (
+                              turf.distance(
+                                  turf.point([qData.lng, qData.lat]),
+                                  turf.point(coords),
+                                  {
+                                      units: qData.unit,
+                                  },
+                              ) <= qData.radius
+                          );
+                      });
 
             if (cancelled) return;
-            setOptions(filteredFeatures);
+            setOptions(inRange);
 
             const existing = drafts[question.dbId];
             if (existing?.selectedTentacleName) {
@@ -351,53 +307,23 @@ function TentacleUnansweredCard({ question }: { question: CommittedQuestion }) {
 
             const suggested = await deriveSuggestedTentacleSelection(question);
             if (cancelled) return;
-
-            const existingNameSet = new Set(
-                filteredFeatures.map((f: any) =>
-                    String(f?.properties?.name ?? ""),
-                ),
+            const names = new Set(
+                inRange.map((f: any) => String(f?.properties?.name ?? "")),
             );
-            const fallbackName =
+            const name =
                 suggested.selectedTentacleName === "false" ||
-                existingNameSet.has(suggested.selectedTentacleName)
+                names.has(suggested.selectedTentacleName)
                     ? suggested.selectedTentacleName
                     : "false";
-
-            const selectedLocation =
-                fallbackName === "false"
-                    ? false
-                    : (filteredFeatures.find(
-                          (f: any) =>
-                              String(f?.properties?.name ?? "") ===
-                              fallbackName,
-                      ) ?? false);
-
-            setSelectedName(fallbackName);
-            setDraftAnswerSelection(question, {
-                confirmed: deriveTentacleConfirmed(
-                    (question.questionData as any).location,
-                    selectedLocation,
-                ),
-                selectedTentacleName: fallbackName,
-                selectedTentacleLocation: selectedLocation,
-            });
+            select(name, inRange);
             setInitializing(false);
         };
 
-        loadOptions().catch(() => {
-            if (!cancelled) {
-                setOptions([]);
-                setSelectedName("false");
-                setDraftAnswerSelection(question, {
-                    confirmed: deriveTentacleConfirmed(
-                        (question.questionData as any).location,
-                        false,
-                    ),
-                    selectedTentacleName: "false",
-                    selectedTentacleLocation: false,
-                });
-                setInitializing(false);
-            }
+        load().catch(() => {
+            if (cancelled) return;
+            setOptions([]);
+            select("false", []);
+            setInitializing(false);
         });
 
         return () => {
@@ -405,153 +331,260 @@ function TentacleUnansweredCard({ question }: { question: CommittedQuestion }) {
         };
     }, [question.dbId]);
 
-    const onValueChange = (value: string) => {
-        const selectedLocation =
+    function select(value: string, pool = options) {
+        const location =
             value === "false"
                 ? false
-                : (options.find(
-                      (feature: any) =>
-                          String(feature?.properties?.name ?? "") === value,
+                : (pool.find(
+                      (f: any) => String(f?.properties?.name ?? "") === value,
                   ) ?? false);
-
         setSelectedName(value);
         setDraftAnswerSelection(question, {
-            confirmed: deriveTentacleConfirmed(
-                (question.questionData as any).location,
-                selectedLocation,
-            ),
+            confirmed: deriveTentacleConfirmed(qData.location, location),
             selectedTentacleName: value,
-            selectedTentacleLocation: selectedLocation,
+            selectedTentacleLocation: location,
         });
-    };
+    }
 
-    const handleSend = async () => {
+    const send = async () => {
         const draft = drafts[question.dbId];
-        const answerData: DraftAnswerSelection =
+        const answer: DraftAnswerSelection =
             draft && typeof draft.confirmed === "boolean"
                 ? draft
                 : {
-                      confirmed: deriveTentacleConfirmed(
-                          (question.questionData as any).location,
-                          false,
-                      ),
+                      confirmed: deriveTentacleConfirmed(qData.location, false),
                       selectedTentacleName: "false",
                       selectedTentacleLocation: false,
                   };
-
-        setAnswering(true);
+        setSending(true);
         try {
-            await answerQuestion(question.dbId, answerData);
+            await answerQuestion(question.dbId, answer);
             clearDraftAnswerSelection(question.dbId);
-        } catch (err: any) {
+        } catch (err) {
             console.error("Failed to answer:", err);
         } finally {
-            setAnswering(false);
+            setSending(false);
         }
     };
 
+    const busy = sending || initializing;
+
     return (
-        <div className="rounded-lg border border-white/10 bg-white/5 p-3 mb-2">
-            <div className="text-sm text-slate-300 mb-1">
-                <span className="text-slate-500 text-xs">
-                    Q{question.order}
-                </span>{" "}
-                {label}
-            </div>
-            <div className="text-xs text-slate-500 mb-2">Sent at {sentAt}</div>
-            <div className="mb-2">
+        <CardShell question={question}>
+            <div data-testid="tentacle-select">
                 <Select
-                    trigger="Location"
+                    trigger="Closest place"
                     options={{
-                        false: "Not Within",
+                        false: "I'm not within range",
                         ...mapToObj(options, (feature: any) => [
                             String(feature?.properties?.name ?? "Unknown"),
                             String(feature?.properties?.name ?? "Unknown"),
                         ]),
                     }}
                     value={selectedName as any}
-                    onValueChange={onValueChange as any}
-                    disabled={answering || initializing}
+                    onValueChange={(v: any) => select(v)}
+                    disabled={busy}
                 />
             </div>
             <Button
-                size="sm"
-                onClick={handleSend}
-                disabled={answering || initializing}
-                className="w-full bg-blue-600 hover:bg-blue-500 text-white gap-1"
+                variant="hider"
+                className="mt-2.5 w-full"
+                onClick={send}
+                disabled={busy}
+                data-testid="send-answer"
             >
-                {answering || initializing ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                    <Send className="w-3.5 h-3.5" />
-                )}
-                Send answer
-            </Button>{" "}
-            <VetoButton
-                question={question}
-                disabled={answering || initializing}
-            />{" "}
+                {busy ? <Loader2 className="animate-spin" /> : <Send />}
+                {initializing ? "Finding places…" : "Send answer"}
+            </Button>
+            <VetoControl question={question} disabled={sending} />
+        </CardShell>
+    );
+}
+
+function UndoCard({ question }: { question: CommittedQuestion }) {
+    const [undoing, setUndoing] = useState(false);
+    if (!question.answer) return null;
+    const seconds = Math.max(
+        0,
+        Math.ceil(
+            (new Date(question.answer.undoDeadline).getTime() - Date.now()) /
+                1000,
+        ),
+    );
+    if (seconds <= 0) return null;
+
+    const undo = async () => {
+        if (!question.answer) return;
+        setUndoing(true);
+        try {
+            await undoAnswer(question.answer.dbId);
+        } catch (err) {
+            console.error("Failed to undo:", err);
+        } finally {
+            setUndoing(false);
+        }
+    };
+
+    return (
+        <div
+            className="flex items-center gap-3 rounded-2xl border border-amber-500/20 bg-amber-500/[0.06] p-3"
+            data-testid="undo-card"
+            data-question-type={question.questionType}
+            data-question-order={question.order}
+        >
+            <QuestionKindIcon kind={question.questionType as any} />
+            <div className="min-w-0 flex-1">
+                <p className="truncate text-sm text-white">
+                    {questionPrompt(question)}
+                </p>
+                <p className="text-xs text-slate-400">
+                    You answered:{" "}
+                    <span className="font-semibold text-white">
+                        {answerLabel(question)}
+                    </span>
+                </p>
+            </div>
+            <Button
+                variant="outline"
+                size="sm"
+                onClick={undo}
+                disabled={undoing}
+                data-testid="undo-answer"
+            >
+                <Undo2 />
+                Undo
+                <span className="flex items-center gap-0.5 text-[11px] font-normal tabular-nums text-slate-400">
+                    <Clock className="h-3 w-3" />
+                    {seconds}s
+                </span>
+            </Button>
         </div>
     );
 }
 
-function VetoButton({
+function VetoControl({
     question,
     disabled,
 }: {
     question: CommittedQuestion;
     disabled?: boolean;
 }) {
+    const [open, setOpen] = useState(false);
+    const [reason, setReason] = useState("");
     const [vetoing, setVetoing] = useState(false);
 
-    const handleVeto = async () => {
+    const veto = async () => {
         setVetoing(true);
         try {
-            await vetoQuestion(question.dbId);
-        } catch (err: any) {
+            await vetoQuestion(question.dbId, reason.trim() || null);
+        } catch (err) {
             console.error("Failed to veto:", err);
             setVetoing(false);
         }
     };
 
+    if (!open) {
+        return (
+            <button
+                type="button"
+                onClick={() => setOpen(true)}
+                disabled={disabled}
+                className="mt-1.5 flex min-h-10 w-full items-center justify-center gap-1.5 rounded-xl text-xs font-medium text-slate-400 hover:bg-white/5 hover:text-red-300 disabled:opacity-50"
+                data-testid="veto-question"
+            >
+                <Ban className="h-3.5 w-3.5" />
+                Veto this question
+            </button>
+        );
+    }
     return (
-        <Button
-            size="sm"
-            variant="ghost"
-            onClick={handleVeto}
-            disabled={disabled || vetoing}
-            className="w-full mt-1 gap-1 text-red-400/80 hover:text-red-300 hover:bg-red-500/10"
-        >
-            {vetoing ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            ) : (
-                <Ban className="w-3.5 h-3.5" />
-            )}
-            Veto question
-        </Button>
+        <div className="mt-2.5 space-y-2 rounded-xl border border-red-500/25 bg-red-500/[0.06] p-2.5">
+            <RawInput
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder="Reason (optional)"
+                maxLength={200}
+                data-testid="veto-reason"
+            />
+            <div className="grid grid-cols-2 gap-2">
+                <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setOpen(false)}
+                    disabled={vetoing}
+                >
+                    Cancel
+                </Button>
+                <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={veto}
+                    disabled={vetoing}
+                    data-testid="confirm-veto"
+                >
+                    {vetoing ? <Loader2 className="animate-spin" /> : <Ban />}
+                    Veto
+                </Button>
+            </div>
+        </div>
     );
 }
 
-function formatQuestionLabel(q: CommittedQuestion): string {
-    const type = q.questionType;
-    const data = q.questionData;
+// ─── Wording ─────────────────────────────────────────────────
 
-    switch (type) {
-        case "radius": {
-            const within = data.within ? "Within" : "Outside";
-            return `${within} ${data.radius} ${data.unit} radius`;
-        }
+const UNIT_LABEL: Record<string, [string, string]> = {
+    miles: ["mile", "miles"],
+    kilometers: ["km", "km"],
+    meters: ["m", "m"],
+};
+
+function distance(value: unknown, unit: unknown): string {
+    const n = Number(value);
+    const [one, many] = UNIT_LABEL[String(unit)] ?? [
+        String(unit),
+        String(unit),
+    ];
+    return `${n} ${n === 1 ? one : many}`;
+}
+
+/** "major-city-full" → "major city". */
+function thing(type: unknown): string {
+    return String(type ?? "place")
+        .replace(/-full$/, "")
+        .replace(/^custom-.*/, "custom place")
+        .replace(/[-_]/g, " ");
+}
+
+export function questionPrompt(q: CommittedQuestion): string {
+    const d = q.questionData as Record<string, unknown>;
+    switch (q.questionType) {
+        case "radius":
+            return `Are you within ${distance(d.radius, d.unit)} of the seekers?`;
         case "thermometer":
-            return `Thermometer: ${data.warmer ? "Warmer" : "Colder"}`;
+            return "The seekers moved. Are they now warmer or colder?";
         case "tentacles":
-            return `Tentacles: ${String(data.locationType ?? "custom")}`;
+            return `Of the ${thing(d.locationType)}s within ${distance(d.radius, d.unit)} of the seekers, which is closest to you?`;
         case "matching":
-            return `Matching: ${String(data.type ?? "zone")} — ${data.same ? "Same" : "Different"}`;
+            return `Is your nearest ${thing(d.type)} the same as the seekers'?`;
         case "measuring":
-            return `Measuring: ${String(data.type ?? "coastline")} — ${data.hiderCloser ? "Closer" : "Further"}`;
+            return `Compared to the seekers, are you closer to or further from a ${thing(d.type)}?`;
         default:
-            return `${type} question`;
+            return `${q.questionType} question`;
     }
+}
+
+function answerLabel(q: CommittedQuestion): string {
+    const data = q.answer?.answerData as Record<string, unknown> | undefined;
+    if (!data) return "";
+    if (q.questionType === "tentacles") {
+        const name = data.selectedTentacleName;
+        return !name || name === "false" ? "Not in range" : String(name);
+    }
+    const options = getAnswerOptions(q);
+    const confirmed = !!data.confirmed;
+    return options.first.confirmed === confirmed
+        ? options.first.label
+        : options.second.label;
 }
 
 function getAnswerOptions(question: CommittedQuestion): {
@@ -559,60 +592,20 @@ function getAnswerOptions(question: CommittedQuestion): {
     second: { label: string; confirmed: boolean };
 } {
     const d = question.questionData as Record<string, unknown>;
-
+    // `confirmed` means "the seeker's drawn proposition is true".
+    const pair = (no: string, yes: string, proposition: boolean) => ({
+        first: { label: no, confirmed: proposition === false },
+        second: { label: yes, confirmed: proposition === true },
+    });
     switch (question.questionType) {
-        case "radius": {
-            const proposition = !!d.within;
-            return {
-                first: {
-                    label: "Outside",
-                    confirmed: proposition === false,
-                },
-                second: {
-                    label: "Inside",
-                    confirmed: proposition === true,
-                },
-            };
-        }
-        case "thermometer": {
-            const proposition = !!d.warmer;
-            return {
-                first: {
-                    label: "Colder",
-                    confirmed: proposition === false,
-                },
-                second: {
-                    label: "Warmer",
-                    confirmed: proposition === true,
-                },
-            };
-        }
-        case "measuring": {
-            const proposition = !!d.hiderCloser;
-            return {
-                first: {
-                    label: "Hider Further",
-                    confirmed: proposition === false,
-                },
-                second: {
-                    label: "Hider Closer",
-                    confirmed: proposition === true,
-                },
-            };
-        }
-        case "matching": {
-            const proposition = !!d.same;
-            return {
-                first: {
-                    label: "Different",
-                    confirmed: proposition === false,
-                },
-                second: {
-                    label: "Same",
-                    confirmed: proposition === true,
-                },
-            };
-        }
+        case "radius":
+            return pair("No, outside", "Yes, inside", !!d.within);
+        case "thermometer":
+            return pair("Colder", "Warmer", !!d.warmer);
+        case "measuring":
+            return pair("Further", "Closer", !!d.hiderCloser);
+        case "matching":
+            return pair("Different", "Same", !!d.same);
         default:
             return {
                 first: { label: "Yes", confirmed: true },

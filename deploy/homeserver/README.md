@@ -22,9 +22,9 @@ goes live within a minute, so merge only after the
 | Name / source | `jetlag-hide-seek` — <https://github.com/MW-SAND/jetlag-hide-seek> |
 | Image | `ghcr.io/mw-sand/jetlag-hide-seek:<version>@sha256:<digest>` (multi-arch, arm64 + amd64) |
 | Current location | GitHub Pages + Supabase (retired after cut-over, no data migrated) |
-| Data | `/mnt/backup/jetlag/jetlag.db` (+ `-wal`/`-shm` while running). Expected < 50 MB |
+| Data | `/mnt/backup/jetlag/jetlag.db` (+ `-wal`/`-shm` while running). Expected < 50 MB. Plus a disposable map-data cache in `/mnt/backup/jetlag/cache/` (≤ 200 MB, `JETLAG_OVERPASS_CACHE_MB`) — on the USB drive, so it never wears the SD card |
 | Database | SQLite (inside the app container, no separate DB container) |
-| Ports / protocols | `8080/tcp` HTTP inside the `homeserver` network; long-lived SSE responses on `/api/games/*/events`. No host ports |
+| Ports / protocols | `8080/tcp` HTTP inside the `homeserver` network; long-lived SSE responses on `/api/games/*/events`. No host ports. Outbound HTTPS to the public Overpass servers (map data, cached) |
 | Public domain | `jetlag.3mgroup.eu` (NPM + Let's Encrypt) |
 | Expected RAM | ~21 MiB idle, ~24 MiB with 30 connected players (measured on amd64); `mem_limit: 160m`. Record the Jetson numbers in ACCEPTANCE.md |
 | Root-owned files | **None** — runs as uid/gid 1000 (`jetson`), so no ACL entry is needed |
@@ -102,7 +102,9 @@ AGE_IDENTITY_FILE="<age identity>" ~/homeserver/scripts/jetlag-backup.sh restore
 ```
 
 The DB is small, so it goes into the normal backup archive (not the large-media
-path). There is no binary data directory to exclude. Off-site copies keep
+path). The helper only copies the database: the `cache/` folder is
+regenerable map data and must stay **out** of the archive (if `backup.sh` tars
+`/mnt/backup/jetlag`, add `--exclude=jetlag/cache`). Off-site copies keep
 working as before (pull only).
 
 ## README fragments for the homeserver repo
@@ -120,7 +122,8 @@ working as before (pull only).
 ├── .jetlag-volume     # mount marker; the container won't start without it
 ├── jetlag.db          # SQLite database (uid 1000)
 ├── jetlag.db-wal      # present while running
-└── jetlag.db-shm      # present while running
+├── jetlag.db-shm      # present while running
+└── cache/overpass/    # disposable map-data cache (not backed up)
 ```
 
 **Setup step:** see "Setup" above. **NPM host:** see "Nginx Proxy Manager"

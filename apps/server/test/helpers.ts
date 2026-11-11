@@ -3,7 +3,7 @@ import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
 
-import { type App, createApp } from "../src/app.ts";
+import { type App, type AppOptions, createApp } from "../src/app.ts";
 import { type Config, DATA_MARKER, loadConfig } from "../src/config.ts";
 import { createLogger } from "../src/log.ts";
 
@@ -23,6 +23,7 @@ export function tempDataDir(withMarker = true) {
 
 export async function startServer(
     overrides: Partial<Config> = {},
+    extra: Pick<AppOptions, "overpassFetch"> = {},
 ): Promise<TestServer> {
     const dataDir = overrides.dataDir ?? tempDataDir();
     const clock = {
@@ -43,6 +44,7 @@ export async function startServer(
         config,
         now: () => clock.now,
         logger: createLogger("error", true),
+        ...extra,
     });
     await new Promise<void>((resolve) =>
         app.server.listen(0, "127.0.0.1", resolve),

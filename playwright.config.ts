@@ -17,11 +17,15 @@ export default defineConfig({
         ...devices["Desktop Chrome"],
     },
     projects: [
-        { name: "desktop", use: { ...devices["Desktop Chrome"] } },
         {
+            name: "desktop",
+            use: { ...devices["Desktop Chrome"] },
+        },
+        {
+            // game.spec.ts drives phones and laptops itself (both combinations).
             name: "mobile",
             use: { ...devices["Pixel 7"] },
-            testMatch: /smoke\.spec\.ts/,
+            testMatch: /(smoke|landing)\.spec\.ts/,
         },
     ],
     webServer: external

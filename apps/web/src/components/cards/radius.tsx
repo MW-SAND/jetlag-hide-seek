@@ -12,14 +12,13 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { UnitSelect } from "@/components/UnitSelect";
 import {
     hiderMode,
-    isLoading,
     questionModified,
     questions,
     triggerLocalRefresh,
 } from "@/lib/context";
 import { cn } from "@/lib/utils";
 
-import { QuestionCard } from "./base";
+import { QuestionCard, SoloOnly } from "./base";
 
 export const RadiusQuestionComponent = ({
     data,
@@ -35,7 +34,6 @@ export const RadiusQuestionComponent = ({
     useStore(triggerLocalRefresh);
     const $hiderMode = useStore(hiderMode);
     const $questions = useStore(questions);
-    const $isLoading = useStore(isLoading);
     const label = `Radius
     ${
         $questions
@@ -63,7 +61,7 @@ export const RadiusQuestionComponent = ({
                         type="number"
                         className="rounded-md p-2 w-16"
                         value={data.radius}
-                        disabled={!data.drag || $isLoading}
+                        disabled={!data.drag}
                         onChange={(e) =>
                             questionModified(
                                 (data.radius = parseFloat(e.target.value)),
@@ -72,7 +70,7 @@ export const RadiusQuestionComponent = ({
                     />
                     <UnitSelect
                         unit={data.unit}
-                        disabled={!data.drag || $isLoading}
+                        disabled={!data.drag}
                         onChange={(unit) =>
                             questionModified((data.unit = unit))
                         }
@@ -92,30 +90,29 @@ export const RadiusQuestionComponent = ({
                     }
                     questionModified();
                 }}
-                disabled={!data.drag || $isLoading}
+                disabled={!data.drag}
             />
-            <div className="flex gap-2 items-center p-2">
-                <Label
-                    className={cn(
-                        "font-semibold text-lg",
-                        $isLoading && "text-muted-foreground",
-                    )}
-                >
-                    Result
-                </Label>
-                <ToggleGroup
-                    className="grow"
-                    type="single"
-                    value={data.within ? "inside" : "outside"}
-                    onValueChange={(value: "inside" | "outside") =>
-                        questionModified((data.within = value === "inside"))
-                    }
-                    disabled={!!$hiderMode || !data.drag || $isLoading}
-                >
-                    <ToggleGroupItem value="outside">Outside</ToggleGroupItem>
-                    <ToggleGroupItem value="inside">Inside</ToggleGroupItem>
-                </ToggleGroup>
-            </div>
+            <SoloOnly>
+                <div className="flex gap-2 items-center p-2">
+                    <Label className={cn("font-semibold text-lg")}>
+                        Result
+                    </Label>
+                    <ToggleGroup
+                        className="grow"
+                        type="single"
+                        value={data.within ? "inside" : "outside"}
+                        onValueChange={(value: "inside" | "outside") =>
+                            questionModified((data.within = value === "inside"))
+                        }
+                        disabled={!!$hiderMode || !data.drag}
+                    >
+                        <ToggleGroupItem value="outside">
+                            Outside
+                        </ToggleGroupItem>
+                        <ToggleGroupItem value="inside">Inside</ToggleGroupItem>
+                    </ToggleGroup>
+                </div>
+            </SoloOnly>
         </QuestionCard>
     );
 };

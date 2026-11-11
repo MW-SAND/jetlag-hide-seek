@@ -4,8 +4,14 @@ import { lazy, Suspense, useEffect, useState } from "react";
 import { MultiplayerOverlay } from "@/components/MultiplayerOverlay";
 import { appView } from "@/lib/game-store";
 
-const loadGameUI = () => import("@/components/GameUI");
+const loadGameUI = () => import("@/components/game/GameShell");
 const GameUI = lazy(loadGameUI);
+const Toasts = lazy(() => import("@/components/Toasts"));
+
+/** `?s=`, `?hz=`, `?hzc=` or `?pb=`: someone shared a map setup. */
+const hasSharedSetup = () =>
+    typeof window !== "undefined" &&
+    /[?&](s|hz|hzc|pb)=/.test(window.location.search);
 
 /**
  * The landing page renders from the small initial bundle (and is prerendered
@@ -16,10 +22,19 @@ const GameUI = lazy(loadGameUI);
 export function App() {
     const view = useStore(appView);
     const [showGame, setShowGame] = useState(false);
+    const [sharedSetup, setSharedSetup] = useState(false);
 
     useEffect(() => {
-        if (view !== "landing") setShowGame(true);
+        if (view === "game" || view === "ended") setShowGame(true);
     }, [view]);
+
+    // A shared map link: load the setup into this device's map settings so it
+    // is used for the next game this player creates.
+    useEffect(() => {
+        if (!hasSharedSetup()) return;
+        setSharedSetup(true);
+        void import("@/lib/share").then((m) => m.loadSharedSetupFromUrl());
+    }, []);
 
     useEffect(() => {
         // Fetch the map chunk once the user starts interacting (typing a name,
@@ -54,6 +69,11 @@ export function App() {
                     fallback={<div className="fixed inset-0 bg-jetlag" />}
                 >
                     <GameUI />
+                </Suspense>
+            )}
+            {(view !== "landing" || sharedSetup) && (
+                <Suspense fallback={null}>
+                    <Toasts />
                 </Suspense>
             )}
         </>

@@ -23,20 +23,19 @@ test.describe("smoke", () => {
         });
 
         await page.goto("/", { waitUntil: "domcontentloaded" });
-        await expect(
-            page.getByRole("button", { name: "Create Game" }),
-        ).toBeVisible();
+        await expect(page.getByTestId("landing-submit")).toBeVisible();
 
         // Budget for JS needed to show the landing page (compressed). The map
         // chunk is only fetched once the user interacts.
         const initialBytes = scripts.reduce((sum, s) => sum + s.bytes, 0);
         expect(initialBytes).toBeGreaterThan(0);
         expect(initialBytes).toBeLessThan(100 * 1024);
-        expect(scripts.some((s) => /GameUI-/.test(s.url))).toBe(false);
+        expect(scripts.some((s) => /GameShell-/.test(s.url))).toBe(false);
 
         // The landing page is prerendered: it's in the HTML before any JS runs.
         const html = await (await page.request.get("/")).text();
-        expect(html).toContain("Create Game");
+        expect(html).toContain("Hide &amp; Seek");
+        expect(html).toContain('data-testid="landing-submit"');
 
         expect(errors).toEqual([]);
     });

@@ -11,6 +11,7 @@ import {
     LOCATION_FIRST_TAG,
     OVERPASS_API,
     OVERPASS_API_FALLBACK,
+    OVERPASS_MAX_GET_URL,
 } from "./constants";
 
 // Step 3.4: Yield main thread before expensive synchronous osmtogeojson parsing
@@ -34,7 +35,23 @@ export const getOverpassData = async (
 ) => {
     const encodedQuery = encodeURIComponent(query);
     const primaryUrl = `${OVERPASS_API}?data=${encodedQuery}`;
-    let response = await cacheFetch(primaryUrl, loadingText, cacheType);
+    let response: Response;
+    if (primaryUrl.length > OVERPASS_MAX_GET_URL) {
+        // Too long for a URL: POST to our proxy (it caches server-side).
+        const request = fetch(OVERPASS_API, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "X-Requested-With": "jetlag",
+            },
+            body: `data=${encodedQuery}`,
+        });
+        response = await (loadingText
+            ? toast.promise(request, { pending: loadingText })
+            : request);
+    } else {
+        response = await cacheFetch(primaryUrl, loadingText, cacheType);
+    }
 
     if (!response.ok) {
         // Try the fallback, but store the result under the primary URL key so future requests are served from cache without needing to fail-over again.

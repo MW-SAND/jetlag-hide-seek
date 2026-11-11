@@ -6,9 +6,16 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { startFakeOverpass } from "./fake-overpass.mjs";
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "jetlag-e2e-"));
 fs.writeFileSync(path.join(dataDir, ".jetlag-volume"), "");
+
+// Hermetic by default; E2E_REAL_OVERPASS=1 uses the public servers instead.
+const overpass = process.env.E2E_REAL_OVERPASS
+    ? null
+    : await startFakeOverpass();
 
 const server = path.join(root, "apps/server/dist/server.mjs");
 const staticDir = path.join(root, "apps/web/dist");
@@ -33,6 +40,7 @@ const child = spawn(
             COOKIE_SECURE: "false",
             TRUST_PROXY: "false",
             LOG_LEVEL: "warn",
+            ...(overpass ? { OVERPASS_UPSTREAMS: overpass.url } : {}),
         },
     },
 );
@@ -43,6 +51,7 @@ const stop = () => {
 process.on("SIGINT", stop);
 process.on("SIGTERM", stop);
 child.on("exit", (code) => {
+    overpass?.close();
     fs.rmSync(dataDir, { recursive: true, force: true });
     process.exit(code ?? 0);
 });

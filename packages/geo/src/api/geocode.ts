@@ -11,7 +11,9 @@ export const geocode = async (
 ) => {
     const features = (
         await (
-            await fetch(`${GEOCODER_API}?lang=${language}&q=${address}`)
+            await fetch(
+                `${GEOCODER_API}?lang=${encodeURIComponent(language)}&q=${encodeURIComponent(address)}`,
+            )
         ).json()
     ).features as OpenStreetMap[];
 

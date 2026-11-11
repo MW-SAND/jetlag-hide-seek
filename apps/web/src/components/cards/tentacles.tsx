@@ -23,7 +23,6 @@ import { UnitSelect } from "@/components/UnitSelect";
 import {
     drawingQuestionKey,
     hiderMode,
-    isLoading,
     questionModified,
     questions,
     triggerLocalRefresh,
@@ -45,7 +44,6 @@ export const TentacleQuestionComponent = ({
 }) => {
     const $questions = useStore(questions);
     const $drawingQuestionKey = useStore(drawingQuestionKey);
-    const $isLoading = useStore(isLoading);
     const label = `Tentacles
     ${
         $questions
@@ -78,14 +76,14 @@ export const TentacleQuestionComponent = ({
                                 (data.radius = parseFloat(e.target.value)),
                             )
                         }
-                        disabled={!data.drag || $isLoading}
+                        disabled={!data.drag}
                     />
                     <UnitSelect
                         unit={data.unit}
                         onChange={(unit) =>
                             questionModified((data.unit = unit))
                         }
-                        disabled={!data.drag || $isLoading}
+                        disabled={!data.drag}
                     />
                 </div>
             </SidebarMenuItem>
@@ -139,7 +137,7 @@ export const TentacleQuestionComponent = ({
                         }
                         questionModified();
                     }}
-                    disabled={!data.drag || $isLoading}
+                    disabled={!data.drag}
                 />
             </SidebarMenuItem>
             {data.locationType === "custom" && data.drag && (
@@ -156,7 +154,7 @@ export const TentacleQuestionComponent = ({
                                     drawingQuestionKey.set(-1);
                                 }
                             }}
-                            disabled={!data.drag || $isLoading}
+                            disabled={!data.drag}
                         />
                         and use the buttons at the bottom left of the map.
                     </p>
@@ -181,7 +179,7 @@ export const TentacleQuestionComponent = ({
                     }
                     questionModified();
                 }}
-                disabled={!data.drag || $isLoading}
+                disabled={!data.drag}
             />
             <SidebarMenuItem className={MENU_ITEM_CLASSNAME}>
                 <Suspense
@@ -213,7 +211,7 @@ export const TentacleQuestionComponent = ({
                                   )
                                 : findTentacleLocations(data)
                         }
-                        disabled={!data.drag || $isLoading}
+                        disabled={!data.drag}
                     />
                 </Suspense>
             </SidebarMenuItem>

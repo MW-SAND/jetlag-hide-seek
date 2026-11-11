@@ -1,4 +1,11 @@
-import type { BrowserContext, Page } from "@playwright/test";
+import {
+    type Browser,
+    type BrowserContext,
+    devices,
+    expect,
+    type Locator,
+    type Page,
+} from "@playwright/test";
 
 /** 1×1 transparent PNG used for every map tile. */
 const TILE = Buffer.from(
@@ -6,7 +13,14 @@ const TILE = Buffer.from(
     "base64",
 );
 
-/** A small square around Utrecht used as the playable area. */
+/** The play area used by every test (same box as e2e/fake-overpass.mjs). */
+export const AREA_BBOX = {
+    minLat: 52.0,
+    minLon: 4.9,
+    maxLat: 52.2,
+    maxLon: 5.3,
+};
+
 export const AREA = {
     type: "FeatureCollection",
     features: [
@@ -45,54 +59,110 @@ export const MAP_LOCATION = {
     },
 };
 
-/** Every third-party URL requested by any page in this worker. */
-export const externalRequests: string[] = [];
+/** Photon search results (raw API format: [lng, lat], extent lng/lat). */
+const PHOTON_PLACES = [
+    {
+        type: "Feature",
+        geometry: { type: "Point", coordinates: [5.12, 52.09] },
+        properties: {
+            osm_type: "R",
+            osm_id: 47667,
+            extent: [4.9, 52.2, 5.3, 52.0],
+            country: "Netherlands",
+            state: "Utrecht",
+            osm_key: "place",
+            osm_value: "city",
+            name: "Utrecht",
+            type: "city",
+        },
+    },
+    {
+        type: "Feature",
+        geometry: { type: "Point", coordinates: [5.2, 52.1] },
+        properties: {
+            osm_type: "R",
+            osm_id: 47670,
+            extent: [4.8, 52.3, 5.6, 51.9],
+            country: "Netherlands",
+            osm_key: "boundary",
+            osm_value: "administrative",
+            name: "Utrecht",
+            type: "state",
+        },
+    },
+];
 
-/**
- * Keep tests hermetic: no real tiles, Overpass, geocoder or ArcGIS CDN.
- */
-export async function mockExternalServices(context: BrowserContext) {
-    const requested = externalRequests;
+export type Device = "desktop" | "mobile";
+
+const DEVICES: Record<Device, Parameters<Browser["newContext"]>[0]> = {
+    desktop: {
+        ...devices["Desktop Chrome"],
+        viewport: { width: 1366, height: 860 },
+    },
+    mobile: devices["Pixel 7"],
+};
+
+export interface Player {
+    name: string;
+    device: Device;
+    context: BrowserContext;
+    page: Page;
+    /** Console errors, page errors and failed same-origin requests. */
+    problems: string[];
+    /** Every third-party URL requested. */
+    external: string[];
+    /** Map tile URLs requested. */
+    tiles: string[];
+}
+
+/** Keep tests hermetic: fake tiles and geocoder; no other third parties. */
+export async function mockExternalServices(
+    context: BrowserContext,
+    external: string[] = [],
+    tiles: string[] = [],
+) {
     await context.route(
         /^https?:\/\/(?!127\.0\.0\.1|localhost)/,
         async (route) => {
             const url = route.request().url();
-            requested.push(url);
-            if (
-                /basemaps\.cartocdn\.com|tile\.openstreetmap|arcgisonline|thunderforest/.test(
-                    url,
-                )
-            ) {
+            external.push(url);
+            if (/arcgisonline|thunderforest|tile\.openstreetmap/.test(url)) {
+                tiles.push(url);
                 return route.fulfill({
                     status: 200,
                     contentType: "image/png",
                     body: TILE,
                 });
             }
-            if (/overpass/.test(url)) {
-                return route.fulfill({
-                    status: 200,
-                    contentType: "application/json",
-                    body: JSON.stringify({ elements: [] }),
-                });
-            }
             if (/photon\.komoot\.io/.test(url)) {
+                const q =
+                    new URL(url).searchParams.get("q")?.toLowerCase() ?? "";
+                const features = PHOTON_PLACES.filter((f) =>
+                    f.properties.name.toLowerCase().startsWith(q.slice(0, 3)),
+                );
                 return route.fulfill({
                     status: 200,
                     contentType: "application/json",
                     body: JSON.stringify({
                         type: "FeatureCollection",
-                        features: [],
+                        features,
                     }),
+                });
+            }
+            // Direct Overpass is only a fallback when /api/overpass is down.
+            if (/overpass/.test(url)) {
+                return route.fulfill({
+                    status: 200,
+                    contentType: "application/json",
+                    body: '{"elements":[]}',
                 });
             }
             return route.abort();
         },
     );
-    return requested;
 }
 
-/** Start every page with a known local state (no tutorial, fixed area). */
+/** Start with a known local state: no tutorial and the Utrecht test area. */
 export async function seedLocalState(context: BrowserContext) {
     await context.addInitScript(
         ({ area, location }) => {
@@ -106,50 +176,142 @@ export async function seedLocalState(context: BrowserContext) {
     );
 }
 
-export async function newPlayer(context: BrowserContext): Promise<Page> {
-    await mockExternalServices(context);
-    await seedLocalState(context);
-    const page = await context.newPage();
-    page.on("pageerror", (error) => {
-        throw new Error(`Page error: ${error.message}`);
+export async function newPlayer(
+    browser: Browser,
+    name: string,
+    device: Device,
+    options: { seed?: boolean; allow?: RegExp } = {},
+): Promise<Player> {
+    const context = await browser.newContext({
+        ...DEVICES[device],
+        permissions: ["clipboard-read", "clipboard-write"],
     });
-    return page;
+    // Deterministic sharing: use the clipboard path, not the OS share sheet.
+    await context.addInitScript(() => {
+        Object.defineProperty(navigator, "share", {
+            value: undefined,
+            configurable: true,
+        });
+    });
+    const player: Player = {
+        name,
+        device,
+        context,
+        page: null as any,
+        problems: [],
+        external: [],
+        tiles: [],
+    };
+    await mockExternalServices(context, player.external, player.tiles);
+    if (options.seed !== false) await seedLocalState(context);
+    const page = await context.newPage();
+    player.page = page;
+    const allow = options.allow;
+    const record = (message: string) => {
+        if (!allow || !allow.test(message)) player.problems.push(message);
+    };
+    page.on("pageerror", (error) => record(`pageerror: ${error.message}`));
+    page.on("console", (m) => {
+        if (m.type() === "error" && !/Failed to load resource/.test(m.text()))
+            record(`console: ${m.text()}`);
+    });
+    page.on("response", (res) => {
+        const url = res.url();
+        if (
+            res.status() >= 400 &&
+            /^https?:\/\/(127\.0\.0\.1|localhost)/.test(url)
+        ) {
+            record(
+                `HTTP ${res.status()} ${res.request().method()} ${new URL(url).pathname}`,
+            );
+        }
+    });
+    return player;
 }
 
-export async function createGame(
-    page: Page,
-    name: string,
-    role: "Hider" | "Seeker",
-) {
+export async function createGame(p: Player, role: "seeker" | "hider") {
+    const { page } = p;
     await page.goto("/");
-    await page.getByRole("button", { name: "Create Game" }).click();
-    await page.getByPlaceholder("Enter your name").fill(name);
-    await page.getByRole("button", { name: role, exact: true }).click();
-    await page
-        .locator('button:has-text("Create Game"):not([disabled])')
-        .last()
-        .click();
-    await page.getByText("Room Code").waitFor();
-    const code = page.url().match(/game\/([A-Z0-9]{6})/i)?.[1];
-    if (!code) throw new Error("no room code in URL");
+    await page.getByTestId("tab-create").click();
+    await page.getByPlaceholder("Enter your name").fill(p.name);
+    await page.getByTestId(`role-${role}`).click();
+    await page.getByTestId("landing-submit").click();
+    await expect(page.getByTestId("lobby")).toBeVisible();
+    const code = (await page.getByTestId("room-code").innerText()).trim();
+    expect(code).toMatch(/^[A-Z0-9]{6}$/);
     return code;
 }
 
-export async function joinGame(
-    page: Page,
+/** Join through the invite link (the form is pre-filled with the code). */
+export async function joinViaInvite(
+    p: Player,
     code: string,
-    name: string,
-    role: "Hider" | "Seeker",
+    role: "seeker" | "hider",
 ) {
-    await page.goto("/");
-    await page.getByRole("button", { name: "Join Game" }).click();
-    await page.getByPlaceholder("ABC123").fill(code);
-    await page.getByPlaceholder("Enter your name").fill(name);
-    await page.getByRole("button", { name: role, exact: true }).click();
-    await page
-        .locator('button:has-text("Join Game"):not([disabled])')
-        .last()
-        .click();
+    const { page } = p;
+    await page.goto(`/#game/${code}`);
+    await expect(page.getByTestId("tab-join")).toHaveAttribute(
+        "aria-selected",
+        "true",
+    );
+    await expect(page.getByPlaceholder("ABC123")).toHaveValue(code);
+    await page.getByPlaceholder("Enter your name").fill(p.name);
+    await page.getByTestId(`role-${role}`).click();
+    await page.getByTestId("landing-submit").click();
+    await expect(page.getByTestId("lobby")).toBeVisible();
+}
+
+export async function startGame(host: Player, ...others: Player[]) {
+    await host.page.getByTestId("start-game").click();
+    for (const p of [host, ...others]) {
+        await expect(p.page.getByTestId("game-shell")).toBeVisible();
+    }
+}
+
+export const cardByOrder = (page: Page, order: number): Locator =>
+    page.locator(`[data-testid="question-card"][data-question-key="${order}"]`);
+
+/** Ask a question through the UI; returns the new (draft) card. */
+export async function askQuestion(p: Player, kind: string): Promise<Locator> {
+    const { page } = p;
+    const keys = () =>
+        page
+            .getByTestId("question-card")
+            .evaluateAll((els) =>
+                els.map((el) => el.getAttribute("data-question-key")),
+            );
+    const before = new Set(await keys());
+    await page.getByTestId("ask-question").click();
+    await expect(page.getByTestId("ask-sheet")).toBeVisible();
+    await page.getByTestId(`ask-${kind}`).click();
+    await expect(page.getByTestId("ask-sheet")).toBeHidden();
+    let added: string | undefined;
+    await expect
+        .poll(async () => {
+            added =
+                (await keys()).find((k) => k !== null && !before.has(k)) ??
+                undefined;
+            return added;
+        })
+        .toBeTruthy();
+    const card = page.locator(
+        `[data-testid="question-card"][data-question-key="${added}"]`,
+    );
+    await expect(card).toHaveAttribute("data-question-type", kind);
+    return card;
+}
+
+/** Third-party hosts the app may contact. */
+export const ALLOWED_THIRD_PARTIES =
+    /server\.arcgisonline\.com|services\.arcgisonline\.com|photon\.komoot\.io/;
+
+/** Assert a player saw no errors and only talked to allowed third parties. */
+export function expectClean(p: Player) {
+    expect(p.problems, `${p.name}: console/page/HTTP problems`).toEqual([]);
+    expect(
+        p.external.filter((url) => !ALLOWED_THIRD_PARTIES.test(url)),
+        `${p.name}: unexpected third-party requests`,
+    ).toEqual([]);
 }
 
 /** Calls the API from inside the page so the browser's cookie is used. */
@@ -176,4 +338,21 @@ export async function apiFromPage<T = any>(
         },
         { method, url, body },
     );
+}
+
+/** No element is wider than the screen (no sideways scrolling on phones). */
+export async function expectNoHorizontalOverflow(page: Page) {
+    const { scroll, width } = await page.evaluate(() => ({
+        scroll: document.documentElement.scrollWidth,
+        width: window.innerWidth,
+    }));
+    expect(scroll).toBeLessThanOrEqual(width);
+}
+
+/** Interactive element is at least `min` CSS px in both directions. */
+export async function expectTouchTarget(locator: Locator, min = 40) {
+    const box = await locator.boundingBox();
+    expect(box, "element should be visible").not.toBeNull();
+    expect(Math.round(box!.height)).toBeGreaterThanOrEqual(min);
+    expect(Math.round(box!.width)).toBeGreaterThanOrEqual(min);
 }

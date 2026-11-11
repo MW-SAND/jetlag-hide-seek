@@ -3,235 +3,350 @@ import {
     Check,
     Copy,
     Crown,
-    Globe,
+    Loader2,
     LogOut,
-    MapPin,
+    MapPinned,
     Play,
-    Users,
+    Share2,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { Logo } from "@/components/brand/Logo";
+import { PlacePicker } from "@/components/PlacePicker";
 import { Button } from "@/components/ui/button";
+import { mapGeoLocation, polyGeoJSON } from "@/lib/context";
 import {
+    currentPlayer,
     fetchPlayers,
     gameSession,
     isHost,
     leaveGame,
+    multiplayerError,
     type Player,
     players,
     startGame,
     subscribeToGame,
 } from "@/lib/multiplayer";
+import { inviteLink } from "@/lib/preferences";
+import { cn } from "@/lib/utils";
 
 export function GameLobby() {
     const session = useStore(gameSession);
     const allPlayers = useStore(players);
     const amHost = useStore(isHost);
-    const [copied, setCopied] = useState(false);
-    const [subscribed, setSubscribed] = useState(false);
+    const me = useStore(currentPlayer);
+    const error = useStore(multiplayerError);
+    const [ready, setReady] = useState(false);
+    const [starting, setStarting] = useState(false);
 
     useEffect(() => {
         if (!session) return;
-        setSubscribed(false);
+        setReady(false);
         // The event stream delivers player and phase changes; it reconnects on
         // its own and always starts with the current version.
-        subscribeToGame(session.gameId).then(() => setSubscribed(true));
+        subscribeToGame(session.gameId).then(() => setReady(true));
         fetchPlayers(session.gameId);
     }, [session?.gameId]);
 
     if (!session) return null;
 
-    const hiders = allPlayers.filter((p) => p.role === "hider");
     const seekers = allPlayers.filter((p) => p.role === "seeker");
-
-    const copyCode = async () => {
-        await navigator.clipboard.writeText(session.roomCode);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-    };
+    const hiders = allPlayers.filter((p) => p.role === "hider");
+    const host = allPlayers.find((p) => p.id === session.hostId);
+    const missing =
+        allPlayers.length < 2
+            ? "Waiting for at least one more player…"
+            : hiders.length === 0
+              ? "Nobody is hiding yet — someone should join as hider."
+              : seekers.length === 0
+                ? "Nobody is seeking yet — someone should join as seeker."
+                : null;
 
     const handleStart = async () => {
+        setStarting(true);
         await startGame();
+        setStarting(false);
     };
 
     return (
-        <div className="fixed inset-0 z-[9999] bg-jetlag flex flex-col items-center justify-center p-4 overflow-hidden overflow-y-auto">
-            {/* Background */}
-            <div className="absolute inset-0 overflow-hidden pointer-events-none">
-                <div className="absolute top-1/3 -left-20 w-96 h-96 bg-blue-500/5 rounded-full blur-3xl" />
-                <div className="absolute bottom-1/3 -right-20 w-80 h-80 bg-cyan-500/5 rounded-full blur-3xl" />
-                <div
-                    className="absolute inset-0 opacity-[0.03]"
-                    style={{
-                        backgroundImage: `
-                            linear-gradient(rgba(255,255,255,0.3) 1px, transparent 1px),
-                            linear-gradient(90deg, rgba(255,255,255,0.3) 1px, transparent 1px)
-                        `,
-                        backgroundSize: "60px 60px",
-                    }}
-                />
-            </div>
-
-            <div className="relative z-10 w-full max-w-md space-y-4">
-                {/* Room code header */}
-                <div className="text-center">
-                    <p className="text-slate-400 text-xs uppercase tracking-wider mb-2">
-                        Room Code
+        <div
+            className="fixed inset-0 z-[1400] flex flex-col bg-background"
+            data-testid="lobby"
+        >
+            <header className="safe-top flex items-center gap-3 border-b border-white/5 px-4 py-3">
+                <Logo className="h-9 w-9" />
+                <div className="min-w-0 flex-1">
+                    <h1 className="text-lg font-semibold leading-tight text-white">
+                        Lobby
+                    </h1>
+                    <p className="truncate text-xs text-slate-400">
+                        {amHost
+                            ? "You're the host"
+                            : host
+                              ? `Hosted by ${host.display_name}`
+                              : "Getting ready"}
                     </p>
-                    <button
-                        onClick={copyCode}
-                        className="inline-flex items-center gap-3 px-6 py-3 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 transition-all group"
-                    >
-                        <span className="text-3xl font-mono font-bold text-white tracking-[0.25em]">
-                            {session.roomCode}
-                        </span>
-                        {copied ? (
-                            <Check className="w-5 h-5 text-emerald-400" />
+                </div>
+                <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => leaveGame()}
+                    aria-label="Leave game"
+                >
+                    <LogOut />
+                    Leave
+                </Button>
+            </header>
+
+            <main className="scrollbar-thin flex-1 overflow-y-auto">
+                <div className="mx-auto w-full max-w-lg space-y-4 px-4 py-5">
+                    <RoomCodeCard roomCode={session.roomCode} />
+
+                    <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                        <div className="mb-3 flex items-center gap-2">
+                            <MapPinned className="h-4 w-4 text-blue-300" />
+                            <h2 className="text-sm font-semibold text-white">
+                                Play area
+                            </h2>
+                        </div>
+                        {amHost ? (
+                            <>
+                                <PlacePicker />
+                                <p className="mt-2 text-xs text-slate-400">
+                                    Search a city, region or country. Everyone
+                                    gets this area when the game starts.
+                                </p>
+                            </>
                         ) : (
-                            <Copy className="w-5 h-5 text-slate-500 group-hover:text-slate-300 transition-colors" />
+                            <p className="text-sm text-slate-400">
+                                The host picks the play area. It appears on your
+                                map when the game starts.
+                            </p>
                         )}
-                    </button>
-                    <p className="text-slate-500 text-xs mt-2">
-                        {copied
-                            ? "Copied!"
-                            : "Share this code with other players"}
-                    </p>
-                </div>
+                    </section>
 
-                {/* Player list */}
-                <div className="rounded-xl border border-white/10 bg-white/5 backdrop-blur-sm overflow-hidden">
-                    <div className="px-4 py-3 border-b border-white/5 flex items-center justify-between">
-                        <div className="flex items-center gap-2 text-sm font-medium text-slate-300">
-                            <Users className="w-4 h-4" />
-                            Players
-                        </div>
-                        <span className="text-xs text-slate-500">
-                            {allPlayers.length} joined
-                        </span>
-                    </div>
-
-                    {/* Hiders */}
-                    {hiders.length > 0 && (
-                        <div>
-                            <div className="px-4 py-1.5 bg-white/[0.02]">
-                                <span className="text-xs uppercase tracking-wider text-emerald-400/70 font-medium">
-                                    Hiders
-                                </span>
-                            </div>
-                            {hiders.map((p) => (
-                                <PlayerRow
-                                    key={p.id}
-                                    player={p}
-                                    isCurrentUser={p.id === session.playerId}
-                                    isHost={p.id === session.hostId}
-                                />
-                            ))}
-                        </div>
-                    )}
-
-                    {/* Seekers */}
-                    {seekers.length > 0 && (
-                        <div>
-                            <div className="px-4 py-1.5 bg-white/[0.02]">
-                                <span className="text-xs uppercase tracking-wider text-blue-400/70 font-medium">
-                                    Seekers
-                                </span>
-                            </div>
-                            {seekers.map((p) => (
-                                <PlayerRow
-                                    key={p.id}
-                                    player={p}
-                                    isCurrentUser={p.id === session.playerId}
-                                    isHost={p.id === session.hostId}
-                                />
-                            ))}
-                        </div>
-                    )}
-
-                    {allPlayers.length === 0 && (
-                        <div className="px-4 py-8 text-center text-slate-500 text-sm">
-                            Waiting for players...
-                        </div>
-                    )}
-                </div>
-
-                {/* Actions */}
-                <div className="flex gap-2">
-                    <Button
-                        variant="ghost"
-                        onClick={leaveGame}
-                        className="text-slate-400 hover:text-white gap-1.5"
+                    <section
+                        className="grid gap-3 sm:grid-cols-2"
+                        aria-label="Players"
                     >
-                        <LogOut className="w-4 h-4" />
-                        Leave
-                    </Button>
-
-                    {amHost && (
-                        <Button
-                            onClick={handleStart}
-                            disabled={allPlayers.length < 2 || !subscribed}
-                            className="flex-1 bg-blue-600 hover:bg-blue-500 text-white gap-2"
-                        >
-                            <Play className="w-4 h-4" />
-                            {subscribed ? "Start Game" : "Connecting..."}
-                        </Button>
-                    )}
-
-                    {!amHost && (
-                        <div className="flex-1 flex items-center justify-center text-sm text-slate-400">
-                            {subscribed
-                                ? "Waiting for host to start..."
-                                : "Connecting..."}
-                        </div>
-                    )}
+                        <Team
+                            title="Seekers"
+                            tone="blue"
+                            members={seekers}
+                            hostId={session.hostId}
+                            meId={me?.id}
+                        />
+                        <Team
+                            title="Hiders"
+                            tone="emerald"
+                            members={hiders}
+                            hostId={session.hostId}
+                            meId={me?.id}
+                        />
+                    </section>
                 </div>
-            </div>
+            </main>
+
+            <footer className="safe-bottom border-t border-white/5 bg-slate-950/80 px-4 py-3 backdrop-blur">
+                <div className="mx-auto w-full max-w-lg space-y-2">
+                    {error && (
+                        <p role="alert" className="text-sm text-red-300">
+                            {error}
+                        </p>
+                    )}
+                    {amHost ? (
+                        <>
+                            {missing && (
+                                <p className="text-center text-xs text-amber-300/90">
+                                    {missing}
+                                </p>
+                            )}
+                            <Button
+                                size="lg"
+                                className="w-full"
+                                onClick={handleStart}
+                                disabled={
+                                    allPlayers.length < 2 || !ready || starting
+                                }
+                                data-testid="start-game"
+                            >
+                                {starting ? (
+                                    <Loader2 className="animate-spin" />
+                                ) : (
+                                    <Play />
+                                )}
+                                Start game
+                            </Button>
+                        </>
+                    ) : (
+                        <p className="flex items-center justify-center gap-2 py-3 text-sm text-slate-400">
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            Waiting for the host to start…
+                        </p>
+                    )}
+                    <AreaSummary />
+                </div>
+            </footer>
         </div>
     );
 }
 
-function PlayerRow({
-    player,
-    isCurrentUser,
-    isHost,
+function AreaSummary() {
+    const amHost = useStore(isHost);
+    const location = useStore(mapGeoLocation);
+    const poly = useStore(polyGeoJSON);
+    if (!amHost) return null;
+    const name = poly ? "Custom drawn area" : location?.properties?.name;
+    return name ? (
+        <p className="text-center text-xs text-slate-500">
+            Play area: <span className="text-slate-300">{name}</span>
+        </p>
+    ) : null;
+}
+
+function RoomCodeCard({ roomCode }: { roomCode: string }) {
+    const [copied, setCopied] = useState<"code" | "link" | null>(null);
+    const link = inviteLink(roomCode);
+    const canShare =
+        typeof navigator !== "undefined" &&
+        typeof navigator.share === "function";
+
+    const copy = async (what: "code" | "link") => {
+        try {
+            await navigator.clipboard.writeText(
+                what === "code" ? roomCode : link,
+            );
+            setCopied(what);
+            setTimeout(() => setCopied(null), 2000);
+        } catch {
+            window.prompt("Copy this:", what === "code" ? roomCode : link);
+        }
+    };
+
+    const share = async () => {
+        try {
+            await navigator.share({
+                title: "Join my Hide & Seek game",
+                text: `Room code ${roomCode}`,
+                url: link,
+            });
+        } catch {
+            /* dismissed */
+        }
+    };
+
+    return (
+        <section className="rounded-2xl border border-white/10 bg-gradient-to-br from-blue-500/15 via-slate-900 to-emerald-500/10 p-5 text-center">
+            <p className="text-xs font-medium uppercase tracking-widest text-slate-400">
+                Room code
+            </p>
+            <button
+                type="button"
+                onClick={() => copy("code")}
+                className="mt-1 font-mono text-4xl font-bold tracking-[0.3em] text-white"
+                aria-label={`Room code ${roomCode}, tap to copy`}
+                data-testid="room-code"
+            >
+                {roomCode}
+            </button>
+            <div className="mt-4 grid grid-cols-2 gap-2">
+                {canShare ? (
+                    <Button onClick={share}>
+                        <Share2 />
+                        Invite
+                    </Button>
+                ) : (
+                    <Button onClick={() => copy("link")}>
+                        {copied === "link" ? <Check /> : <Share2 />}
+                        {copied === "link" ? "Link copied" : "Copy invite link"}
+                    </Button>
+                )}
+                <Button variant="outline" onClick={() => copy("code")}>
+                    {copied === "code" ? <Check /> : <Copy />}
+                    {copied === "code" ? "Copied" : "Copy code"}
+                </Button>
+            </div>
+        </section>
+    );
+}
+
+function Team({
+    title,
+    tone,
+    members,
+    hostId,
+    meId,
 }: {
-    player: Player;
-    isCurrentUser: boolean;
-    isHost: boolean;
+    title: string;
+    tone: "blue" | "emerald";
+    members: Player[];
+    hostId: string | null;
+    meId?: string;
 }) {
     return (
-        <div className="flex items-center gap-3 px-4 py-2.5 border-b border-white/5 last:border-b-0">
-            <div
-                className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${
-                    player.role === "hider"
-                        ? "bg-emerald-500/20 text-emerald-400"
-                        : "bg-blue-500/20 text-blue-400"
-                }`}
-            >
-                {player.display_name.charAt(0).toUpperCase()}
-            </div>
-            <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-1.5">
-                    <span
-                        className={`text-sm font-medium truncate ${
-                            isCurrentUser ? "text-white" : "text-slate-300"
-                        }`}
-                    >
-                        {player.display_name}
-                    </span>
-                    {isCurrentUser && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-slate-400">
-                            you
-                        </span>
+        <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+            <div className="mb-2 flex items-center justify-between">
+                <h2
+                    className={cn(
+                        "text-sm font-semibold",
+                        tone === "blue" ? "text-blue-300" : "text-emerald-300",
                     )}
-                    {isHost && <Crown className="w-3.5 h-3.5 text-amber-400" />}
-                </div>
+                >
+                    {title}
+                </h2>
+                <span className="text-xs text-slate-500">{members.length}</span>
             </div>
-            {player.role === "hider" ? (
-                <Globe className="w-3.5 h-3.5 text-emerald-500/50" />
+            {members.length === 0 ? (
+                <p className="py-2 text-sm text-slate-500">No one yet</p>
             ) : (
-                <MapPin className="w-3.5 h-3.5 text-blue-500/50" />
+                <ul className="space-y-1.5">
+                    {members.map((p) => (
+                        <li
+                            key={p.id}
+                            className="flex items-center gap-2.5"
+                            data-testid="lobby-player"
+                        >
+                            <Avatar name={p.display_name} tone={tone} />
+                            <span className="min-w-0 flex-1 truncate text-sm text-white">
+                                {p.display_name}
+                            </span>
+                            {p.id === meId && (
+                                <span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-slate-300">
+                                    You
+                                </span>
+                            )}
+                            {p.id === hostId && (
+                                <Crown
+                                    className="h-4 w-4 text-amber-300"
+                                    aria-label="Host"
+                                />
+                            )}
+                        </li>
+                    ))}
+                </ul>
             )}
         </div>
+    );
+}
+
+export function Avatar({
+    name,
+    tone,
+}: {
+    name: string;
+    tone: "blue" | "emerald";
+}) {
+    return (
+        <span
+            aria-hidden="true"
+            className={cn(
+                "flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-bold",
+                tone === "blue"
+                    ? "bg-blue-500/20 text-blue-200"
+                    : "bg-emerald-500/20 text-emerald-200",
+            )}
+        >
+            {name.charAt(0).toUpperCase()}
+        </span>
     );
 }

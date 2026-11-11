@@ -17,15 +17,34 @@ Manager at `jetlag.3mgroup.eu`.
 | Hosting                              | GitHub Pages + Supabase free tier (+ a Pi pinging it so it doesn't pause)          | One container: static files + API + SQLite                          |
 | Realtime                             | 6 overlapping Supabase `postgres_changes` channels                                 | One SSE stream per player carrying only version numbers             |
 | Map computation                      | Main thread (UI freezes on heavy questions)                                        | Web Worker, memoized per question prefix, cancellable               |
-| Initial load (Lighthouse, mobile 4G) | score 0.50–0.76, LCP 6.4–33 s, 588 KB JS                                           | score 0.99, LCP ≈ 2.0 s, TBT ≈ 0, **69 KB JS**                      |
+| Initial load (Lighthouse, mobile 4G) | score 0.50–0.76, LCP 6.4–33 s, 588 KB JS                                           | score 0.98, LCP ≈ 2.1 s, TBT ≈ 0.1 s, **< 100 KB JS**               |
 | Share links                          | Pastebin via public CORS-Anywhere proxy                                            | Built-in short links (`/?s=…`), old `?hz`/`?hzc` links still work   |
-| Third parties                        | Google Analytics, Clarity, Google Fonts, jsDelivr/GitHub marker images, ArcGIS CDN | Map tiles, Overpass and Photon only                                 |
+| Third parties                        | Google Analytics, Clarity, Google Fonts, jsDelivr/GitHub marker images, ArcGIS CDN | Esri map tiles and Photon search; map data via the server's cache   |
 | Server RAM                           | n/a                                                                                | ~21 MiB idle, ~24 MiB with 30 connected players (amd64 measurement) |
 
 Also fixed along the way: geo-data realtime never fired, stale local data
 overwrote the server on entering a game, lost writes when leaving, wrong host
 detection, React hooks called conditionally (two components), random player
-order on equal join times.
+order on equal join times. The old CARTO map tiles now require an API key
+(they show "API KEY REQUIRED"), so the default map is Esri's keyless street map.
+
+## Using it
+
+1. **Create** a game (name + seeker/hider), or **join** with the 6-letter code
+   or an invite link. A refresh reconnects you automatically.
+2. In the lobby the host searches the **play area** and taps **Start game**.
+3. Seekers tap **Ask a question**, pick a type (it's placed at the map centre;
+   drag the pin), and **Send to hider**.
+4. The hider's phone buzzes and opens the question in plain words, with the
+   answer **pre-selected from the hiding spot** — usually one tap on **Send
+   answer**. Answers can be undone for a short while, or the question vetoed
+   with a reason.
+5. Every seeker's map shrinks to where the hider can still be. The host ends
+   the game from the menu; everyone sees a summary and can view the final map.
+
+Phones get a bottom sheet (drag the handle) and large touch targets; laptops
+get a side panel. GPS ("My location") and clipboard features need https,
+which the homeserver provides via Nginx Proxy Manager.
 
 ## Architecture
 
@@ -44,7 +63,8 @@ deploy/homeserver Ready-to-paste compose entry, backup helper, docs, acceptance 
   module ([apps/server/src/authz.ts](apps/server/src/authz.ts)) and
   table-tested. The hider location is never sent to seekers.
 - **Data:** one SQLite file (`/data/jetlag.db`, WAL). Games expire after 30
-  days, short links after 180 days. No hostnames or IPs are stored.
+  days, short links after 180 days. No hostnames or IPs are stored. Map data
+  from Overpass is cached in `/data/cache` (disposable, ≤ 200 MB).
 - **Single instance:** realtime fan-out is in memory, so run exactly one
   active copy per database (active/standby is fine, active/active is not).
 
@@ -61,29 +81,29 @@ cp apps/server/.env.example apps/server/.env
 pnpm dev          # server on :8080 (data in apps/server/.data) + Vite on :5173
 ```
 
-| Command                                 | What it does                                                       |
-| --------------------------------------- | ------------------------------------------------------------------ |
-| `pnpm test`                             | All unit + integration tests (geo engine, contract, server, web)   |
-| `pnpm build`                            | Production build of web (prerender, precompress) and server bundle |
-| `pnpm test:e2e`                         | Playwright against the production build (run `pnpm build` first)   |
-| `pnpm lint` / `pnpm format`             | ESLint + Prettier                                                  |
-| `pnpm typecheck`                        | TypeScript in every package                                        |
-| `docker compose up --build`             | Run the production image locally on http://localhost:8080          |
-| `node scripts/load-sse.mjs <url> 30 50` | 30 SSE clients, 50 changes: delivery + latency report              |
+| Command                                 | What it does                                                                                                                                     |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `pnpm test`                             | All unit + integration tests (geo engine, contract, server, web)                                                                                 |
+| `pnpm build`                            | Production build of web (prerender, precompress) and server bundle                                                                               |
+| `pnpm test:e2e`                         | Playwright against the production build (run `pnpm build` first); `E2E_REAL_OVERPASS=1` uses the public map servers instead of the built-in fake |
+| `pnpm lint` / `pnpm format`             | ESLint + Prettier                                                                                                                                |
+| `pnpm typecheck`                        | TypeScript in every package                                                                                                                      |
+| `docker compose up --build`             | Run the production image locally on http://localhost:8080                                                                                        |
+| `node scripts/load-sse.mjs <url> 30 50` | 30 SSE clients, 50 changes: delivery + latency report                                                                                            |
 
 ## How it is tested
 
-| Layer                                                                                                                                       | Where                                                              |
-| ------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| Geo engine: ported unit tests + golden test proving the Worker pipeline equals the old main-thread pipeline, memo, cancellation, hider mode | `packages/geo/test`                                                |
-| Contract: room codes, names, defaults, locked questions                                                                                     | `packages/shared/test`                                             |
-| Authorization matrix: every action × role × phase (158 cases)                                                                               | `apps/server/test/authz.test.ts`                                   |
-| Full game over HTTP, privacy fuzzing, SSE, durability (`kill -9` mid-write → integrity ok), static serving, limits                          | `apps/server/test`                                                 |
-| Browser e2e: create/join/start/ask/answer/rejoin/end, secrecy, no third-party CDNs, bundle budget                                           | `e2e/`                                                             |
-| Lighthouse budgets (mobile, simulated 4G)                                                                                                   | `lighthouserc.json` (CI)                                           |
-| Backup helper vs. sqlite3 3.22 in `ubuntu:18.04` (plain + `age`, NAS names, restore, corrupt file)                                          | `deploy/homeserver/test` (CI)                                      |
-| Container amd64 + arm64 (QEMU): start guard, health, uid 1000, graceful stop, size budget (~72 MB compressed)                               | CI `container` job                                                 |
-| On-device checks on the Jetson                                                                                                              | [deploy/homeserver/ACCEPTANCE.md](deploy/homeserver/ACCEPTANCE.md) |
+| Layer                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | Where                                                              |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| Geo engine: ported unit tests + golden test proving the Worker pipeline equals the old main-thread pipeline, memo, cancellation, hider mode                                                                                                                                                                                                                                                                                                                                                                                                                                   | `packages/geo/test`                                                |
+| Contract: room codes, names, defaults, locked questions                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | `packages/shared/test`                                             |
+| Authorization matrix: every action × role × phase (158 cases)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | `apps/server/test/authz.test.ts`                                   |
+| Full game over HTTP, privacy fuzzing, SSE, durability (`kill -9` mid-write → integrity ok), static serving, limits                                                                                                                                                                                                                                                                                                                                                                                                                                                            | `apps/server/test`                                                 |
+| Browser e2e (hermetic: fake Overpass server, mocked tiles/search), run with the seeker on a phone and the hider on a laptop **and vice versa**: start-page validation and touch targets, invite links, lobby area search, all 5 question types asked and answered, undo, veto with reason, drafts (lock/edit/delete), hider spot inside the area and never sent to seekers, map styles, players list, phone bottom sheet, menu invite/share link round trip, refresh-reconnect, leave/late join, 3-player game, end game; zero console errors and no unexpected third parties | `e2e/`                                                             |
+| Lighthouse budgets (mobile, simulated 4G)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | `lighthouserc.json` (CI)                                           |
+| Backup helper vs. sqlite3 3.22 in `ubuntu:18.04` (plain + `age`, NAS names, restore, corrupt file)                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | `deploy/homeserver/test` (CI)                                      |
+| Container amd64 + arm64 (QEMU): start guard, health, uid 1000, graceful stop, size budget (~72 MB compressed)                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | CI `container` job                                                 |
+| On-device checks on the Jetson                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | [deploy/homeserver/ACCEPTANCE.md](deploy/homeserver/ACCEPTANCE.md) |
 
 ## Releasing
 
@@ -96,4 +116,4 @@ the digest to pin in the homeserver compose file. See
 
 Original map generator by [taibeled](https://github.com/taibeled) and
 [contributors](https://github.com/taibeled/JetLagHideAndSeek#contributors).
-Map data © OpenStreetMap contributors; tiles by CARTO / Esri / Thunderforest.
+Map data © OpenStreetMap contributors; tiles by Esri / Thunderforest.
